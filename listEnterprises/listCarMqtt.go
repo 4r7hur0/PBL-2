@@ -4,23 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/4r7hur0/PBL-2/schemas"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
-
-type Enterprises struct {
-	Name string `json:"name"`
-	City string `json:"city"`
-}
 
 func main() {
 	// Initialize the MQTT client
 	client := initializeMQTTClient("tcp://localhost:1883")
 
 	// Enterprises to publish
-	enterprises := []Enterprises{
-		{Name: "Enterprise1", City: "City1"},
-		{Name: "Enterprise2", City: "City2"},
-		{Name: "Enterprise3", City: "City3"},
+	enterprises := []schemas.Enterprises{
+		{Name: "EnterpriseA", City: "City1"},
+		{Name: "EnterpriseB", City: "City2"},
+		{Name: "EnterpriseC", City: "City3"},
 	}
 
 	topic := "car/enterprises"
@@ -43,7 +39,7 @@ func initializeMQTTClient(broker string) mqtt.Client {
 }
 
 // publishEnterprises publishes a list of enterprises to a given topic
-func publishEnterprises(client mqtt.Client, topic string, enterprises []Enterprises) {
+func publishEnterprises(client mqtt.Client, topic string, enterprises []schemas.Enterprises) {
 	for _, en := range enterprises {
 		// Serialize the struct to JSON
 		payload, err := json.Marshal(en)

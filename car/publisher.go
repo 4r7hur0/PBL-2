@@ -13,12 +13,12 @@ func PublishToEnterprise(client mqtt.Client, message string) {
 
 	for _, enterprise := range enterprises {
 		// Publish the message to the formatted topic
-		token := client.Publish(enterprise, 0, false, message)
+		token := client.Publish(enterprise.Name, 0, false, message)
 		token.Wait()
 		if token.Error() != nil {
 			fmt.Printf("Error publishing message to %s: %v\n", enterprise, token.Error())
 		} else {
-			fmt.Printf("Published message: %s to topic: %s\n", message, enterprise)
+			fmt.Printf("Published message: %s to topic: %s\n", message, enterprise.Name)
 		}
 	}
 }

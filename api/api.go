@@ -9,7 +9,7 @@ func main() {
 	// Initialize MQTT client
 	mqtt.InitializeMQTT("tcp://localhost:1883")
 
-	messageChannel := mqtt.StartListening("empresaA", 10)
+	messageChannel := mqtt.StartListening("EnterpriseA", 10)
 
 	go func() {
 		for message := range messageChannel {

@@ -7,3 +7,8 @@ type chargingResquest struct {
 	DischaergeRate string   `json:"discharge_rate"`
 	Route          []string `json:"route"`
 }
+
+type Enterprises struct {
+	Name string `json:"name"`
+	City string `json:"city"`
+}

@@ -10,7 +10,7 @@ import (
 
 var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 	// Handler para confirmações de publicação (opcional)
-	// log.Printf("Received confirmation for message: %s from topic: %s\n", msg.Payload(), msg.Topic())
+	log.Printf("Received confirmation for message: %s from topic: %s\n", msg.Payload(), msg.Topic())
 }
 
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
@@ -41,6 +41,7 @@ func InitializeMQTT(brokerURL string, clientID string) mqtt.Client {
 	opts.OnConnectionLost = connectLostHandler
 	opts.SetAutoReconnect(true)        // Habilita reconexão automática
 	opts.SetConnectRetry(true)         // Tenta reconectar se a conexão inicial falhar
+	opts.SetResumeSubs(true)				 // Retoma as inscrições após reconexão
 	opts.SetConnectTimeout(10 * time.Second) // Aumenta o timeout de conexão
 	opts.SetWriteTimeout(5 * time.Second)   // Timeout para escrita
 	opts.SetKeepAlive(60 * time.Second)    // Keep alive para detectar conexões perdidas

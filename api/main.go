@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 
-	// Imports atualizados
 	"github.com/4r7hur0/PBL-2/api/config"
 	"github.com/4r7hur0/PBL-2/api/coordinator"
 	"github.com/4r7hur0/PBL-2/api/mqtt"

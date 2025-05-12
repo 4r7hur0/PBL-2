@@ -9,14 +9,11 @@ import (
 )
 
 // PublishToEnterprise publishes a message to all enterprises in the list
-func PublishChargingRequest(client mqtt.Client, origin, destination, carID, nameEnter, dischargeRate, topic string, batteryLevel int) {
-	request := schemas.ChargingResquest{
-		EnterpriseName:  nameEnter,
-		CarID:           carID,
-		BatteryLevel:    batteryLevel,
-		DischargeRate:   dischargeRate,
-		OriginCity:      origin,
-		DestinationCity: destination,
+func PublishChargingRequest(client mqtt.Client, origin, destination, carID, topic string) {
+	request := schemas.RouteRequest{
+		VehicleID:   carID,
+		Origin:      origin,
+		Destination: destination,
 	}
 
 	payload, err := json.Marshal(request)

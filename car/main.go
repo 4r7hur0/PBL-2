@@ -5,19 +5,30 @@ import (
 	"time"
 
 	"github.com/4r7hur0/PBL-2/schemas"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 func main() {
 	// Initialize the MQTT client
 	client := initializeMQTTClient("tcp://localhost:1883")
 
+	CarID := generateCarID()
+	fmt.Printf("Car ID: %s\n", CarID)
+
+	// Channel to receive messages from the MQTT broker
+	responseChannel := make(chan string)
+
 	go func() {
 		// Subscribe to the topic
 		subscribeToTopic(client, "car/enterprises", messageHandler)
 	}()
 
-	CarID := generateCarID()
-	fmt.Printf("Car ID: %s\n", CarID)
+	// Go rounine for messages from topic carID
+	go func() {
+		subscribeToTopic(client, CarID, func(c mqtt.Client, m mqtt.Message) {
+			responseChannel <- string(m.Payload())
+		})
+	}()
 
 	// Initialize battery level and discharge rate
 	batteryLevel := initializeBatteryLevel()
@@ -48,8 +59,12 @@ func main() {
 		fmt.Printf("Origin: %s, Destination: %s\n", origin, destination)
 
 		// Publish the charging request
-		PublishChargingRequest(client, origin, destination, CarID, selectedEnterprise.Name, dischargeRate, selectedEnterprise.Name, batteryLevel)
+		PublishChargingRequest(client, origin, destination, CarID, selectedEnterprise.Name)
+		fmt.Println("Waiting for response...")
+		// Wait for a response from the MQTT broker
+		response := <-responseChannel
+		fmt.Printf("Received response: %s\n", response)
 		break
 	}
-	select {}
+
 }

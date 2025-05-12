@@ -1,4 +1,5 @@
 package schemas
+
 import "time"
 
 // ReservationWindow define o início e o fim de uma reserva.
@@ -41,8 +42,8 @@ type ErrorResponse struct {
 
 // TransactionState representa o estado de um segmento de transação.
 type TransactionState struct {
-	Status          string             // PREPARED, COMMITTED, ABORTED
-	Details         interface{}        // Detalhes da reserva
+	Status          string      // PREPARED, COMMITTED, ABORTED
+	Details         interface{} // Detalhes da reserva
 	Timestamp       time.Time
 	ReservationData PrepareRequestBody // Mantém os dados da reserva original
 }
@@ -61,14 +62,14 @@ type ProvisionalReservation struct {
 
 // Constantes de Status
 const (
-	StatusPrepared             = "PREPARED"
-	StatusAborted              = "ABORTED"
-	StatusError                = "ERROR"
-	StatusCommitted            = "COMMITTED"
+	StatusPrepared              = "PREPARED"
+	StatusAborted               = "ABORTED"
+	StatusError                 = "ERROR"
+	StatusCommitted             = "COMMITTED"
 	StatusPreparedPendingCommit = "PREPARED_PENDING_COMMIT"
-	StatusConfirmed            = "CONFIRMED"
-	StatusCancelled            = "CANCELLED"
-	ISOFormat                 = "2006-01-02T15:04:05Z"
+	StatusConfirmed             = "CONFIRMED"
+	StatusCancelled             = "CANCELLED"
+	ISOFormat                   = "2006-01-02T15:04:05Z"
 )
 
 // RouteSegment define um trecho da rota a ser reservado.
@@ -82,4 +83,15 @@ type RouteReservationRequest struct {
 	RequestID string         `json:"request_id"` // ID único para esta requisição de rota
 	VehicleID string         `json:"vehicle_id"`
 	Route     []RouteSegment `json:"route"`
+}
+
+type RouteRequest struct {
+	VehicleID   string `json:"vehicle_id"`
+	Origin      string `json:"origin"`
+	Destination string `json:"destination"`
+}
+
+type Enterprises struct {
+	Name string `json:"name"`
+	City string `json:"city"`
 }

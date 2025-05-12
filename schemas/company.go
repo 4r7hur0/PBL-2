@@ -47,6 +47,33 @@ type TransactionState struct {
 	ReservationData PrepareRequestBody // Mantém os dados da reserva original
 }
 
+// Corpo da requisição para /commit
+type CommitRequestBody struct {
+	TransactionID string `json:"transaction_id"`
+	SegmentID     string `json:"segment_id"` // Opcional, se o commit for por segmento. Se for por transação, só TransactionID.
+}
+
+// Resposta para /commit bem-sucedido
+type CommitSuccessResponse struct {
+	Status        string `json:"status"` // "COMMITTED"
+	TransactionID string `json:"transaction_id"`
+	SegmentID     string `json:"segment_id,omitempty"`
+}
+
+// Corpo da requisição para /abort
+type AbortRequestBody struct {
+	TransactionID string `json:"transaction_id"`
+	SegmentID     string `json:"segment_id"` // Opcional, similar ao commit
+	Reason        string `json:"reason,omitempty"`
+}
+
+// Resposta para /abort bem-sucedido
+type AbortSuccessResponse struct {
+	Status        string `json:"status"` // "ABORTED"
+	TransactionID string `json:"transaction_id"`
+	SegmentID     string `json:"segment_id,omitempty"`
+}
+
 // ProvisionalReservation representa uma reserva pendente.
 type ProvisionalReservation struct {
 	TransactionID     string
@@ -61,14 +88,27 @@ type ProvisionalReservation struct {
 
 // Constantes de Status
 const (
-	StatusPrepared             = "PREPARED"
-	StatusAborted              = "ABORTED"
-	StatusError                = "ERROR"
-	StatusCommitted            = "COMMITTED"
-	StatusPreparedPendingCommit = "PREPARED_PENDING_COMMIT"
-	StatusConfirmed            = "CONFIRMED"
-	StatusCancelled            = "CANCELLED"
-	ISOFormat                 = "2006-01-02T15:04:05Z"
+	StatusPrepared            = "PREPARED"
+	StatusAborted             = "ABORTED"
+	StatusError               = "ERROR"
+	StatusCommitted           = "COMMITTED"
+	StatusPreparedPendingCommit = "PREPARED_PENDING_COMMIT" // Pode ser o mesmo que PREPARED
+	StatusConfirmed           = "CONFIRMED"             // Pode ser o mesmo que COMMITTED
+	StatusCancelled           = "CANCELLED"
+	ISOFormat                 = "2006-01-02T15:04:05Z" 
+
+	StatusBookingPending          string = "BOOKING_PENDING"
+	StatusBookingProcessing       string = "BOOKING_PROCESSING" // Coordenador está na fase de PREPARE
+	StatusBookingAwaitingCommit   string = "BOOKING_AWAITING_COMMIT" // Coordenador está na fase de COMMIT/ABORT
+	StatusBookingFailed           string = "BOOKING_FAILED"
+
+
+	StatusStopPending   string = "STOP_PENDING"
+	StatusStopFailed    string = "STOP_FAILED"
+
+
+    // Adicionar outros status que podem ser retornados pelas APIs remotas
+    StatusAPIPointUnavailable string = "POINT_UNAVAILABLE"
 )
 
 // RouteSegment define um trecho da rota a ser reservado.

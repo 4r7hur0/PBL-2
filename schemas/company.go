@@ -1,6 +1,8 @@
 package schemas
 
-import "time"
+import (
+	"time"
+)
 
 // ReservationWindow define o início e o fim de uma reserva.
 type ReservationWindow struct {
@@ -74,12 +76,12 @@ const (
 
 // RouteSegment define um trecho da rota a ser reservado.
 type RouteSegment struct {
-	ChargingPointID   string            `json:"charging_point_id"`
+	City              string            `json:"city"`
 	ReservationWindow ReservationWindow `json:"reservation_window"`
 }
 
-// RouteReservationRequest é a estrutura da mensagem MQTT para solicitar uma reserva de rota.
-type RouteReservationRequest struct {
+// RouteReservationResponse é a estrutura da mensagem MQTT para enviar uma resposta para o carro.
+type RouteReservationRespose struct {
 	RequestID string         `json:"request_id"` // ID único para esta requisição de rota
 	VehicleID string         `json:"vehicle_id"`
 	Route     []RouteSegment `json:"route"`
@@ -94,4 +96,10 @@ type RouteRequest struct {
 type Enterprises struct {
 	Name string `json:"name"`
 	City string `json:"city"`
+}
+
+type ChosenRouteMsg struct {
+	RequestID string         `json:"request_id"` // ID único para esta requisição de rota
+	VehicleID string         `json:"vehicle_id"`
+	Route     []RouteSegment `json:"route"`
 }

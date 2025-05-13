@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/4r7hur0/PBL-2/schemas"
@@ -16,7 +18,7 @@ func main() {
 	fmt.Printf("Car ID: %s\n", CarID)
 
 	// Channel to receive messages from the MQTT broker
-	responseChannel := make(chan string)
+	responseChannel := make(chan schemas.RouteReservationRespose)
 
 	go func() {
 		// Subscribe to the topic
@@ -26,7 +28,13 @@ func main() {
 	// Go rounine for messages from topic carID
 	go func() {
 		subscribeToTopic(client, CarID, func(c mqtt.Client, m mqtt.Message) {
-			responseChannel <- string(m.Payload())
+			var resp schemas.RouteReservationRespose
+			err := json.Unmarshal(m.Payload(), &resp)
+			if err != nil {
+				fmt.Printf("Error deserializing message: %v\n", err)
+				return
+			}
+			responseChannel <- resp
 		})
 	}()
 
@@ -63,8 +71,42 @@ func main() {
 		fmt.Println("Waiting for response...")
 		// Wait for a response from the MQTT broker
 		response := <-responseChannel
-		fmt.Printf("Received response: %s\n", response)
-		break
+		if len(response.Route) == 0 {
+			fmt.Println("No route available. Retrying in 5 seconds...")
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		rand.Seed(time.Now().UnixNano())
+		randomIndex := rand.Intn(len(response.Route))
+		selectedRoute := response.Route[randomIndex]
+		fmt.Printf("Chosen route: %v\n", selectedRoute)
+
+		// Publish the route reservation
+		chosenRouteMsg := schemas.ChosenRouteMsg{
+			RequestID: response.RequestID,
+			VehicleID: CarID,
+			Route:     []schemas.RouteSegment{selectedRoute},
+		}
+
+		payload, err := json.Marshal(chosenRouteMsg)
+		if err != nil {
+			fmt.Printf("Error serializing message: %v\n", err)
+			continue
+		}
+
+		token := client.Publish("car/route", 0, false, payload)
+		token.Wait()
+		if token.Error() != nil {
+			fmt.Printf("Error publishing message: %v\n", token.Error())
+			continue
+		}
+		fmt.Printf("Route reservation published: %s\n", string(payload))
+
+		fmt.Println("Waiting for response...")
+		response = <-responseChannel
+		fmt.Printf("Response received: %v\n", response)
+
 	}
 
 }

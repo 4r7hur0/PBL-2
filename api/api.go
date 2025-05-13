@@ -6,7 +6,8 @@ import (
 	"strconv" // For parsing total posts from env
 	"strings" // For multiple company configurations
 	"sync"    // For waiting if multiple services run
-
+	
+	"github.com/4r7hur0/PBL-2/api/mqtt" // Assuming this is the correct path for the MQTT package
 	// Assuming local packages are correctly pathed relative to the Go module root
 	companyservice "github.com/4r7hur0/PBL-2/api/router" // Renamed to avoid conflict with router package name
 	"github.com/4r7hur0/PBL-2/registry"
@@ -25,6 +26,8 @@ type CompanyConfig struct {
 func main() {
 	defaultBrokerURL := "tcp://localhost:1883"
 
+	
+
 	// Example: Configure multiple companies via environment variables
 	// COMPANY_CONFIGS="SolAltantico,Salvador,5,solaltantico_client;EnterpriseB,Feira de Santana,3,companyB_client"
 	// Each company string: Name,City,TotalPosts,ClientID
@@ -34,6 +37,8 @@ func main() {
 		// Default single company setup for easy testing
 		configsStr = "SolAltantico,Salvador,5,solaltantico_api_client"
 	}
+
+	mqtt.StartListening(defaultBrokerURL, 10)
 
 	companyConfigStrings := strings.Split(configsStr, ";")
 	var companyConfigs []CompanyConfig
@@ -162,4 +167,5 @@ func main() {
 	// Keep the main goroutine alive until all company services are done (which is forever in this setup)
 	wg.Wait()
 	log.Println("All company services have been signaled to stop. Main application exiting.")
+	
 }

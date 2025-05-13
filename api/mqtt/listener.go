@@ -4,7 +4,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-func StartListening(topic string, bufferSize int) chan string {
+func StartListening(topic string, bufferSize int) {
 	// Create a buffered channel to hold incoming messages
 	messageChannel := make(chan string, bufferSize)
 
@@ -16,6 +16,5 @@ func StartListening(topic string, bufferSize int) chan string {
 			messageChannel <- message
 		})
 	}()
-
-	return messageChannel
+	
 }

@@ -297,7 +297,7 @@ func (h *BookingHandler) executePhase2Abort(transactionID string, segmentsToAbor
 // --- Funções de Preparação, Commit, Abort (Local e Remoto) ---
 
 func (h *BookingHandler) prepareLocalReservation(transactionID string, vehicleID string, stop *ChargingStopRequest) (bool, error) {
-	fmt.Printf("BookingID %s: Preparando LOCALMENTE SegmentID %s (Ponto: %s)\n", transactionID, stop.SegmentID, stop.ChargingPointID)
+	fmt.Printf("BookingID %s: Preparando LOCALMENTE SegmentID %s \n", transactionID, stop.SegmentID)
 	h.lock.Lock()
 	defer h.lock.Unlock()
 
@@ -320,9 +320,6 @@ func (h *BookingHandler) prepareLocalReservation(transactionID string, vehicleID
 		return true, nil
 	}
 
-	// Armazena os detalhes da preparação local
-	// A ProvisionalReservation ou TransactionState do seu schemas/company.go seria mais completa aqui.
-	// Por simplicidade, vamos armazenar o PrepareRequestBody que seria enviado se fosse remoto.
 	localPrepData := schemas.PrepareRequestBody{
 		TransactionID:     transactionID,
 		SegmentID:         stop.SegmentID,

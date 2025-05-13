@@ -5,6 +5,7 @@ docker run -d \
   eclipse-mosquitto
 
 Em caso de erro verificar o diretório.
+No laboratorio trocar user por tec502.
 
 para parar:
 docker stop mosquitto
@@ -14,3 +15,4 @@ docker start mosquitto
 
 para excluir: 
 docker rm mosquitto
+

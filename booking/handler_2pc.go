@@ -32,10 +32,7 @@ type BookingHandlerConfig struct {
 type BookingHandler struct {
 	registry              *registry.ServiceRegistry
 	config                BookingHandlerConfig
-	bookings              map[string]*BookingRequest              // Key: BookingID (TransactionID)
-	// pointTimeReservations armazena o estado da PREPARAÇÃO dos pontos LOCAIS.
-	// O valor poderia ser schemas.ProvisionalReservation ou schemas.TransactionState se elas tiverem campos para expiração, etc.
-	// Por simplicidade, vamos armazenar a schemas.PrepareRequestBody original que levou à preparação.
+	bookings              map[string]*BookingRequest              
 	localPreparedReservations map[string]map[string]schemas.PrepareRequestBody // Key1: ChargingPointID, Key2: TimeSlotKey -> Dados da Preparação
 	lock                      sync.RWMutex
 }

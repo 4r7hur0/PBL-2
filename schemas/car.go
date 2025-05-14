@@ -1,11 +1,19 @@
 package schemas
 
-type chargingResquest struct {
-	EnterpriseName string   `json:"enterprise_name"`
-	CarID          string   `json:"car_id"`
-	BatteryLevel   int      `json:"battery_level"`
-	DischaergeRate string   `json:"discharge_rate"`
-	Route          []string `json:"route"`
+import "time"
+
+type ChargingResquest struct {
+	EnterpriseName  string `json:"enterprise_name"`
+	CarID           string `json:"car_id"`
+	BatteryLevel    int    `json:"battery_level"`
+	DischaergeRate  string `json:"discharge_rate"`
+	OriginCity      string `json:"origin_city"`
+	DestinationCity string `json:"destination_city"`
+}
+
+type Routes struct {
+	City      string    `json:"city"`
+	TimeStamp time.Time `json:"timestamp"`
 }
 
 type Enterprises struct {

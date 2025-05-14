@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/4r7hur0/PBL-2/schemas"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -22,9 +23,11 @@ func main() {
 	}
 
 	topic := "car/enterprises"
-
-	// Publish enterprises to the topic
-	publishEnterprises(client, topic, enterprises)
+	for {
+		// Publish enterprises to the topic
+		publishEnterprises(client, topic, enterprises)
+		time.Sleep(10 * time.Second) // Sleep for 10 seconds before publishing againsss
+	}
 }
 
 // initializeMQTTClient initializes and connects an MQTT client

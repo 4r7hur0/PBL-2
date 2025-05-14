@@ -9,20 +9,26 @@ import (
 )
 
 // PublishToEnterprise publishes a message to all enterprises in the list
-func PublishChargingRequest(client mqtt.Client, topic string, request schemas.ChargingResquest) {
-	// Serialize the request to JSON
+func PublishChargingRequest(client mqtt.Client, origin, destination, carID, nameEnter, dischargeRate, topic string, batteryLevel int) {
+	request := schemas.ChargingResquest{
+		EnterpriseName:  nameEnter,
+		CarID:           carID,
+		BatteryLevel:    batteryLevel,
+		DischargeRate:   dischargeRate,
+		OriginCity:      origin,
+		DestinationCity: destination,
+	}
+
 	payload, err := json.Marshal(request)
 	if err != nil {
 		fmt.Printf("Error serializing request: %v\n", err)
 		return
 	}
-
-	// Publish the message to the topic
 	token := client.Publish(topic, 0, false, payload)
 	token.Wait()
 	if token.Error() != nil {
 		fmt.Printf("Error publishing message: %v\n", token.Error())
-		return
+	} else {
+		fmt.Printf("Published message: %v to topic: %v\n", request, topic)
 	}
-	fmt.Printf("Published message to topic %s: %s\n", topic, string(payload))
 }

@@ -4,13 +4,17 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
-
-	"github.com/google/uuid"
 )
 
-// Generate Car ID unique
+// Generate Car ID in the format "CAR" followed by 4 random letters or numbers
 func generateCarID() string {
-	return uuid.New().String()
+	rand.Seed(time.Now().UnixNano())
+	chars := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	id := "CAR"
+	for i := 0; i < 4; i++ {
+		id += string(chars[rand.Intn(len(chars))])
+	}
+	return id
 }
 
 // Initialize Battery level the battery level with a random value

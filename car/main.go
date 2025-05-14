@@ -11,8 +11,10 @@ func main() {
 	// Initialize the MQTT client
 	client := initializeMQTTClient("tcp://localhost:1883")
 
-	// Subscribe to the topic
-	subscribeToTopic(client, "car/enterprises", messageHandler)
+	go func() {
+		// Subscribe to the topic
+		subscribeToTopic(client, "car/enterprises", messageHandler)
+	}()
 
 	CarID := generateCarID()
 	fmt.Printf("Car ID: %s\n", CarID)
@@ -35,10 +37,19 @@ func main() {
 		}
 	}
 
-	// escolher uma rota com base nas cidades disponiveis
+	for {
+		origin, destination := ChooseTwoRandomCities()
+		if origin == "" && destination == "" {
+			fmt.Println("No cities available. Retrying in 5 seconds...")
+			time.Sleep(5 * time.Second)
+			continue
+		}
 
-	//esperar confirmação da api
+		fmt.Printf("Origin: %s, Destination: %s\n", origin, destination)
 
-	// Keep the program running
+		// Publish the charging request
+		PublishChargingRequest(client, origin, destination, CarID, selectedEnterprise.Name, dischargeRate, selectedEnterprise.Name, batteryLevel)
+		break
+	}
 	select {}
 }

@@ -14,9 +14,11 @@ func main() {
 
 	// Enterprises to publish
 	enterprises := []schemas.Enterprises{
-		{Name: "EnterpriseA", City: "City1"},
-		{Name: "EnterpriseB", City: "City2"},
-		{Name: "EnterpriseC", City: "City3"},
+		{Name: "SolAltantico", City: "Salvador"},
+		{Name: "SertaoCarga", City: "Feira de Santana"},
+		{Name: "ChapadaEletric", City: "Lençois"},
+		{Name: "CacauPower", City: "Ilheus"},
+		{Name: "VelhoChicoEnergia", City: "Juazeiro"},
 	}
 
 	topic := "car/enterprises"

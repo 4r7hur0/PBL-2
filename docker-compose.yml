@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+  listcarmqtt:
+    build:
+      context: .
+      dockerfile: listEnterprises/Dockerfile
+    depends_on:
+      - mosquitto
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883

@@ -18,7 +18,7 @@ func main() {
 	fmt.Printf("Car ID: %s\n", CarID)
 
 	// Channel to receive messages from the MQTT broker
-	responseChannel := make(chan schemas.RouteReservationRespose)
+	responseChannel := make(chan schemas.RouteReservationResponse)
 
 	go func() {
 		// Subscribe to the topic
@@ -28,7 +28,7 @@ func main() {
 	// Go rounine for messages from topic carID
 	go func() {
 		subscribeToTopic(client, CarID, func(c mqtt.Client, m mqtt.Message) {
-			var resp schemas.RouteReservationRespose
+			var resp schemas.RouteReservationResponse
 			err := json.Unmarshal(m.Payload(), &resp)
 			if err != nil {
 				fmt.Printf("Error deserializing message: %v\n", err)

@@ -15,7 +15,7 @@ func main() {
 
 	// Enterprises to publish
 	enterprises := []schemas.Enterprises{
-		{Name: "SolAltantico", City: "Salvador"},
+		{Name: "SolAtlantico", City: "Salvador"},
 		{Name: "SertaoCarga", City: "Feira de Santana"},
 		{Name: "ChapadaEletric", City: "Lençois"},
 		{Name: "CacauPower", City: "Ilheus"},

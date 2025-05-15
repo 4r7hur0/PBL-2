@@ -81,7 +81,7 @@ type RouteSegment struct {
 }
 
 // RouteReservationResponse é a estrutura da mensagem MQTT para enviar uma resposta para o carro.
-type RouteReservationRespose struct {
+type RouteReservationResponse struct {
 	RequestID string         `json:"request_id"` // ID único para esta requisição de rota
 	VehicleID string         `json:"vehicle_id"`
 	Route     []RouteSegment `json:"route"`

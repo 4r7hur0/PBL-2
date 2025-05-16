@@ -12,13 +12,13 @@ import (
 
 func main() {
 	// Initialize the MQTT client
-	client := initializeMQTTClient("tcp://mosquitto:1883")
+	client := initializeMQTTClient("tcp://localhost:1883")
 
 	CarID := generateCarID()
 	fmt.Printf("Car ID: %s\n", CarID)
 
 	// Channel to receive messages from the MQTT broker
-	responseChannel := make(chan schemas.RouteReservationResponse)
+	responseChannel := make(chan schemas.RouteReservationOptions)
 
 	go func() {
 		// Subscribe to the topic
@@ -28,7 +28,7 @@ func main() {
 	// Go rounine for messages from topic carID
 	go func() {
 		subscribeToTopic(client, CarID, func(c mqtt.Client, m mqtt.Message) {
-			var resp schemas.RouteReservationResponse
+			var resp schemas.RouteReservationOptions
 			err := json.Unmarshal(m.Payload(), &resp)
 			if err != nil {
 				fmt.Printf("Error deserializing message: %v\n", err)
@@ -73,22 +73,34 @@ func main() {
 		// This is a blocking call, so it will wait until a message is received
 	RETRY_ROUTE:
 		response := <-responseChannel
-		if len(response.Route) == 0 {
+		if len(response.Routes) == 0 {
 			fmt.Println("No route available. Retrying in 5 seconds...")
 			time.Sleep(5 * time.Second)
 			goto RETRY_ROUTE
 		}
 
 		rand.Seed(time.Now().UnixNano())
-		randomIndex := rand.Intn(len(response.Route))
-		selectedRoute := response.Route[randomIndex]
-		fmt.Printf("Chosen route: %v\n", selectedRoute)
+		randomIndex := rand.Intn(len(response.Routes))
+		selectedRoute := response.Routes[randomIndex]
+				fmt.Println("\nRota escolhida:")
+		if len(selectedRoute) == 0 {
+			fmt.Println("  No route segments provided.")
+		} else {
+			for i, segment := range selectedRoute {
+				start := segment.ReservationWindow.StartTimeUTC.Format("15:04")
+				end := segment.ReservationWindow.EndTimeUTC.Format("15:04")
+				date := segment.ReservationWindow.StartTimeUTC.Format("02/01/2006")
+
+				fmt.Printf("  Etapa %d: Cidade: %s, Janela de Reserva: %s até %s - %s\n", i+1, segment.City, start, end, date)
+			}
+		}
+
 
 		// Publish the route reservation
 		chosenRouteMsg := schemas.ChosenRouteMsg{
 			RequestID: response.RequestID,
 			VehicleID: CarID,
-			Route:     []schemas.RouteSegment{selectedRoute},
+			Route:     selectedRoute,
 		}
 
 		payload, err := json.Marshal(chosenRouteMsg)
@@ -103,9 +115,17 @@ func main() {
 			fmt.Printf("Error publishing message: %v\n", token.Error())
 			continue
 		}
-		fmt.Printf("Route reservation published: %s\n", string(payload))
+		//fmt.Printf("Route reservation published: %s\n", string(payload))
+		fmt.Println("\nReserva de rota publicada:")
 
-		fmt.Println("Waiting for response...")
+		for i, segment := range selectedRoute {
+		start := segment.ReservationWindow.StartTimeUTC.Format("15:04")
+		end := segment.ReservationWindow.EndTimeUTC.Format("15:04")
+		date := segment.ReservationWindow.StartTimeUTC.Format("02/01/2006")
+		fmt.Printf("  Etapa %d: %s | Janela: %s até %s - %s\n", i+1, segment.City, start, end, date)}
+
+
+		fmt.Println("\nWaiting for response...")
 		response = <-responseChannel
 		fmt.Printf("Response received: %v\n", response)
 

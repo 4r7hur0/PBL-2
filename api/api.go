@@ -87,9 +87,25 @@ func main() {
 			responseTopic := routeReq.VehicleID
 			mqtt.Publish(responseTopic, string(responseBytes)) // A função Publish espera uma string
 
-			fmt.Printf("[%s] Resposta enviada para o tópico %s: %s\n", enterpriseName, responseTopic, string(responseBytes))
-		}
-	}()
+			var formattedResp schemas.RouteReservationOptions
+			_ = json.Unmarshal(responseBytes, &formattedResp)
+
+			fmt.Printf("[%s] Resposta enviada para o tópico %s:\n", enterpriseName, responseTopic)
+			fmt.Printf("Request ID: %s\n", formattedResp.RequestID)
+			fmt.Printf("Vehicle ID: %s\n\n", formattedResp.VehicleID)
+
+			for i, rota := range formattedResp.Routes {
+				fmt.Printf("Rota %d:\n", i+1)
+				for j, segment := range rota {
+					start := segment.ReservationWindow.StartTimeUTC.Local().Format("15:04")
+					end := segment.ReservationWindow.EndTimeUTC.Local().Format("15:04")
+					date := segment.ReservationWindow.StartTimeUTC.Local().Format("02/01/2006")
+					fmt.Printf("  Etapa %d: Cidade: %s | Janela: %s até %s - %s\n", j+1, segment.City, start, end, date)
+				}
+				fmt.Println()
+			}
+					}
+				}()
 
 	router.InitRouter(enterprisePort)
 }

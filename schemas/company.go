@@ -6,8 +6,8 @@ import (
 
 // ReservationWindow define o início e o fim de uma reserva.
 type ReservationWindow struct {
-	StartTimeUTC string `json:"start_time_utc"` // Formato: "YYYY-MM-DDTHH:mm:ssZ"
-	EndTimeUTC   string `json:"end_time_utc"`   // Formato: "YYYY-MM-DDTHH:mm:ssZ"
+	StartTimeUTC time.Time `json:"start_time_utc"` // Formato: "YYYY-MM-DDTHH:mm:ssZ"
+	EndTimeUTC   time.Time `json:"end_time_utc"`   // Formato: "YYYY-MM-DDTHH:mm:ssZ"
 }
 
 // CoordinatorCallbackURLs URLs para o coordenador ser chamado de volta.

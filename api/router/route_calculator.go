@@ -54,8 +54,8 @@ func convertPathsToRouteSegments(paths [][]string) [][]schemas.RouteSegment {
 	var routeSegmentsList [][]schemas.RouteSegment
 	utcNow := time.Now().UTC()
 
-	startTimeStr := utcNow.Format("2006-01-02T15:04:05Z")
-	endTimeStr := utcNow.Add(1 * time.Hour).Format("2006-01-02T15:04:05Z")
+	startTimeStr := utcNow
+	endTimeStr := utcNow.Add(1 * time.Hour)
 
 	for _, path := range paths {
 		var singleRoute []schemas.RouteSegment
@@ -89,8 +89,8 @@ func GeneratePossibleRoutes(origin, destination string, allCitiesList []string) 
 		segment := schemas.RouteSegment{
 			City: origin,
 			ReservationWindow: schemas.ReservationWindow{
-				StartTimeUTC: utcNow.Format("2006-01-02T15:04:05Z"),
-				EndTimeUTC:   utcNow.Add(24 * time.Hour).Format("2006-01-02T15:04:05Z"),
+				StartTimeUTC: utcNow,
+				EndTimeUTC:   utcNow.Add(1 * time.Hour),
 			},
 		}
 		return [][]schemas.RouteSegment{{segment}}

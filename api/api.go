@@ -14,7 +14,7 @@ import (
 
 // Mapa de cidades para empresas e lista de todas as cidades
 
-var allCities = []string{"Salvador", "Feira de Santana", "Ilhéus"}
+var allCities = []string{"Salvador", "Feira de Santana", "Ilheus"}
 
 func main() {
 	

@@ -12,7 +12,12 @@ import (
 	"github.com/google/uuid"             
 )
 
+// Mapa de cidades para empresas e lista de todas as cidades
+
+var allCities = []string{"Salvador", "Feira de Santana", "Ilhéus"}
+
 func main() {
+	
 	enterpriseName := os.Getenv("ENTERPRISE_NAME")
 	enterprisePort := os.Getenv("ENTERPRISE_PORT")
 	if enterpriseName == "" {
@@ -50,14 +55,24 @@ func main() {
 			// 3. Gerar um RequestID único
 			requestID := uuid.New().String() // Gera um novo UUID v4 como string
 
-			var calculatedRoute []schemas.RouteSegment
+			var possibleRoutes [][]schemas.RouteSegment
+
+			if routeReq.Origin != "" && routeReq.Destination != "" {
+				// Chamar a função do pacote 'router'
+				possibleRoutes = router.GeneratePossibleRoutes(routeReq.Origin, routeReq.Destination, allCities)
+				if len(possibleRoutes) == 0 {
+					log.Printf("[%s] Nenhuma rota retornada pelo módulo de roteamento para '%s' -> '%s'.", enterpriseName, routeReq.Origin, routeReq.Destination)
+				}
+			} else {
+				log.Printf("[%s] Origem ou destino não especificados na requisição. Mensagem: %s", enterpriseName, messagePayload)
+			}
 
 
 			// 4. Construir o objeto de resposta schemas.RouteReservationResponse
-			response := schemas.RouteReservationResponse{
+			response := schemas.RouteReservationOptions{
 				RequestID: requestID,
 				VehicleID: routeReq.VehicleID,
-				Route:     make([]schemas.RouteSegment, 0), // <---- Lista de rotas vazia, conforme solicitado
+				Routes:    possibleRoutes,
 			}
 
 			// 5. Serializar o objeto de resposta para JSON

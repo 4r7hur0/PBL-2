@@ -87,6 +87,12 @@ type RouteReservationResponse struct {
 	Route     []RouteSegment `json:"route"`
 }
 
+type RouteReservationOptions struct {
+	RequestID string 			 `json:"request_id"` // ID único para esta requisição de rota
+	VehicleID string 			 `json:"vehicle_id"`
+	Routes    [][]RouteSegment `json:"route"`
+}
+
 type RouteRequest struct {
 	VehicleID   string `json:"vehicle_id"`
 	Origin      string `json:"origin"`

@@ -12,7 +12,7 @@ import (
 
 func main() {
 	// Initialize the MQTT client
-	client := initializeMQTTClient("tcp://localhost:1883")
+	client := initializeMQTTClient("tcp://mosquitto:1883")
 
 	CarID := generateCarID()
 	fmt.Printf("Car ID: %s\n", CarID)
@@ -70,11 +70,13 @@ func main() {
 		PublishChargingRequest(client, origin, destination, CarID, selectedEnterprise.Name)
 		fmt.Println("Waiting for response...")
 		// Wait for a response from the MQTT broker
+		// This is a blocking call, so it will wait until a message is received
+	RETRY_ROUTE:
 		response := <-responseChannel
 		if len(response.Route) == 0 {
 			fmt.Println("No route available. Retrying in 5 seconds...")
 			time.Sleep(5 * time.Second)
-			continue
+			goto RETRY_ROUTE
 		}
 
 		rand.Seed(time.Now().UnixNano())

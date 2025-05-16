@@ -22,9 +22,7 @@ func main() {
 	enterprises := []schemas.Enterprises{
 		{Name: "SolAtlantico", City: "Salvador"},
 		{Name: "SertaoCarga", City: "Feira de Santana"},
-		{Name: "ChapadaEletric", City: "Lençois"},
 		{Name: "CacauPower", City: "Ilheus"},
-		{Name: "VelhoChicoEnergia", City: "Juazeiro"},
 	}
 
 	topic := "car/enterprises"

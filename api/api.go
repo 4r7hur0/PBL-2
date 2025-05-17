@@ -32,6 +32,8 @@ func main() {
 
 	messageChannel := mqtt.StartListening(enterpriseName, 10) 
 
+	choosedRoute := mqtt.StartListening(fmt.Sprintf("car/route/%s", enterpriseName), 10)
+
 	// Goroutine para processar as mensagens recebidas
 	go func() {
 		for messagePayload := range messageChannel { 
@@ -106,6 +108,12 @@ func main() {
 			}
 					}
 				}()
+
+		// Goroutine para processar as mensagens recebidas
+		route := <-choosedRoute 
+		fmt.Printf("A rota escolhida pelo carro foi: %s\n", route)
+
+
 
 	router.InitRouter(enterprisePort)
 }

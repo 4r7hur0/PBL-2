@@ -109,7 +109,7 @@ func main() {
 			continue
 		}
 
-		token := client.Publish("car/route", 0, false, payload)
+		token := client.Publish(fmt.Sprintf("car/route/%s", selectedEnterprise.Name), 0, false, payload)
 		token.Wait()
 		if token.Error() != nil {
 			fmt.Printf("Error publishing message: %v\n", token.Error())

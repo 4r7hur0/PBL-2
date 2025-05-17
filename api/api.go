@@ -32,9 +32,11 @@ func main() {
 
 	messageChannel := mqtt.StartListening(enterpriseName, 10) 
 
-	choosedRoute := mqtt.StartListening(fmt.Sprintf("car/route/%s", enterpriseName), 10)
+	chosenRouteTopic := fmt.Sprintf("car/route/%s", enterpriseName)
+	chosenRouteMessageChannel := mqtt.StartListening(chosenRouteTopic, 10)
 
-	// Goroutine para processar as mensagens recebidas
+
+	// Goroutine para processar os pedidos de rota e retornar as opções de rota
 	go func() {
 		for messagePayload := range messageChannel { 
 			fmt.Printf("Mensagem recebida pela empresa %s: %s\n", enterpriseName, messagePayload)
@@ -109,10 +111,40 @@ func main() {
 					}
 				}()
 
-		// Goroutine para processar as mensagens recebidas
-		route := <-choosedRoute 
-		fmt.Printf("A rota escolhida pelo carro foi: %s\n", route)
+	// Goroutine para processar a rota escolhida pelo carro 
+		go func() {
+		for messagePayload := range chosenRouteMessageChannel {
+			fmt.Printf("[%s] Mensagem de ROTA ESCOLHIDA recebida no tópico '%s': %s\n", enterpriseName, chosenRouteTopic, messagePayload)
 
+			// 1. Deserializar a mensagem recebida (payload) para ChosenRouteMsg
+			var chosenRoute schemas.ChosenRouteMsg // Usando a struct definida em schemas
+			err := json.Unmarshal([]byte(messagePayload), &chosenRoute)
+			if err != nil {
+				log.Printf("[%s] Erro ao deserializar ChosenRouteMsg: %v. Mensagem original: %s", enterpriseName, err, messagePayload)
+				continue // Pula para a próxima mensagem em caso de erro
+			}
+
+			// 2. Processar a mensagem da rota escolhida
+			// Exemplo: Logar os detalhes da rota escolhida
+			log.Printf("[%s] Detalhes da Rota Escolhida pelo Veículo %s (Request ID: %s):\n",
+				enterpriseName, chosenRoute.VehicleID, chosenRoute.RequestID)
+
+			if len(chosenRoute.Route) == 0 {
+				log.Printf("[%s] Rota escolhida para VehicleID %s está vazia.", enterpriseName, chosenRoute.VehicleID)
+			} else {
+				for i, segment := range chosenRoute.Route {
+					// Assumindo que schemas.RouteSegment tem ReservationWindow com StartTimeUTC e EndTimeUTC
+					// e que você quer formatá-los como no exemplo anterior.
+					start := segment.ReservationWindow.StartTimeUTC.Local().Format("15:04")
+					end := segment.ReservationWindow.EndTimeUTC.Local().Format("15:04")
+					date := segment.ReservationWindow.StartTimeUTC.Local().Format("02/01/2006")
+					log.Printf("  Segmento %d: Cidade: %s | Janela de Reserva: %s às %s do dia %s\n",
+						i+1, segment.City, start, end, date)
+				}
+			}
+			fmt.Println()
+		}
+	}()
 
 
 	router.InitRouter(enterprisePort)

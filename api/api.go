@@ -6,7 +6,7 @@ import (
 	"strconv" // For parsing total posts from env
 	"strings" // For multiple company configurations
 	"sync"    // For waiting if multiple services run
-	
+
 	"github.com/4r7hur0/PBL-2/api/mqtt" // Assuming this is the correct path for the MQTT package
 	// Assuming local packages are correctly pathed relative to the Go module root
 	companyservice "github.com/4r7hur0/PBL-2/api/router" // Renamed to avoid conflict with router package name
@@ -26,8 +26,6 @@ type CompanyConfig struct {
 func main() {
 	defaultBrokerURL := "tcp://localhost:1883"
 
-	
-
 	// Example: Configure multiple companies via environment variables
 	// COMPANY_CONFIGS="SolAltantico,Salvador,5,solaltantico_client;EnterpriseB,Feira de Santana,3,companyB_client"
 	// Each company string: Name,City,TotalPosts,ClientID
@@ -38,7 +36,7 @@ func main() {
 		configsStr = "SolAltantico,Salvador,5,solaltantico_api_client"
 	}
 
-	mqtt.StartListening(defaultBrokerURL, 10)
+	mqtt.StartListening(defaultBrokerURL)
 
 	companyConfigStrings := strings.Split(configsStr, ";")
 	var companyConfigs []CompanyConfig
@@ -85,18 +83,17 @@ func main() {
 		sr.RegisterEnterprise(registry.EnterpriseService{
 			Name:     conf.Name,
 			City:     conf.City,
-			Capacity: conf.TotalPosts, // Initial capacity
-			Host:     "localhost",     // Placeholder for potential HTTP service
+			Capacity: conf.TotalPosts,                    // Initial capacity
+			Host:     "localhost",                        // Placeholder for potential HTTP service
 			Port:     8080 + len(sr.GetAllEnterprises()), // Placeholder unique port
 		})
 	}
-    // If this API needs to know about companies run by *other* API instances,
-    // their details should also be in the registry (e.g., loaded from a shared config or DB).
-    // For pathfinding, the registry should ideally contain ALL enterprises in the system.
-    // Example: Add some external enterprises for broader pathfinding
-    sr.RegisterEnterprise(registry.EnterpriseService{Name: "ExternalCompX", City: "Lencois", Capacity: 2, Host: "remotehost", Port: 9090})
-    sr.RegisterEnterprise(registry.EnterpriseService{Name: "ExternalCompY", City: "Ilheus", Capacity: 4, Host: "anotherhost", Port: 9091})
-
+	// If this API needs to know about companies run by *other* API instances,
+	// their details should also be in the registry (e.g., loaded from a shared config or DB).
+	// For pathfinding, the registry should ideally contain ALL enterprises in the system.
+	// Example: Add some external enterprises for broader pathfinding
+	sr.RegisterEnterprise(registry.EnterpriseService{Name: "ExternalCompX", City: "Lencois", Capacity: 2, Host: "remotehost", Port: 9090})
+	sr.RegisterEnterprise(registry.EnterpriseService{Name: "ExternalCompY", City: "Ilheus", Capacity: 4, Host: "anotherhost", Port: 9091})
 
 	var wg sync.WaitGroup // To keep main alive if running multiple services as goroutines
 
@@ -111,7 +108,7 @@ func main() {
 			opts.SetCleanSession(true)      // Clean session for reliability
 			opts.SetAutoReconnect(true)
 			opts.SetConnectRetry(true)
-			
+
 			// Optional: OnConnect handler to re-subscribe if connection is lost and re-established
 			var companyServ *companyservice.CompanyService // Declare to use in OnConnect
 			opts.SetOnConnectHandler(func(client mqttPaho.Client) {
@@ -133,7 +130,6 @@ func main() {
 			opts.SetConnectionLostHandler(func(client mqttPaho.Client, err error) {
 				log.Printf("MQTT client for Company [%s] (ClientID: %s) connection lost: %v", conf.Name, conf.ClientID, err)
 			})
-
 
 			companyMqttClient := mqttPaho.NewClient(opts)
 			if token := companyMqttClient.Connect(); token.Wait() && token.Error() != nil {
@@ -164,8 +160,11 @@ func main() {
 		}(config)
 	}
 
+	listener := <-mqtt.MessageChannel
+	log.Println(listener)
+
 	// Keep the main goroutine alive until all company services are done (which is forever in this setup)
 	wg.Wait()
 	log.Println("All company services have been signaled to stop. Main application exiting.")
-	
+
 }

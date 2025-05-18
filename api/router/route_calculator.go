@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/4r7hur0/PBL-2/schemas" // Ajuste o caminho se necessário
+	"github.com/4r7hur0/PBL-2/schemas" 
 )
 
 // IsValidCity verifica se a cidade está na lista de cidades conhecidas.

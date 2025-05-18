@@ -16,6 +16,17 @@ type CoordinatorCallbackURLs struct {
 	AbortURL  string `json:"abort_url"`
 }
 
+// ReservationStatus informa o veículo sobre o resultado da tentativa de reserva.
+type ReservationStatus struct {
+    TransactionID  string         `json:"transaction_id"`
+    VehicleID      string         `json:"vehicle_id"`
+    RequestID      string         `json:"request_id"` // ID da requisição de rota original
+    Status         string         `json:"status"`     // Ex: "CONFIRMED", "REJECTED"
+    Message        string         `json:"message"`
+    ConfirmedRoute []RouteSegment `json:"confirmed_route,omitempty"` // Rota confirmada, se aplicável
+}
+
+
 // PrepareRequestBody é a estrutura para a requisição /prepare.
 type PrepareRequestBody struct {
 	TransactionID           string                  `json:"transaction_id"`

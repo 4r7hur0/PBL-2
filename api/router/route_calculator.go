@@ -102,3 +102,4 @@ func GeneratePossibleRoutes(origin, destination string, allCitiesList []string) 
 	}
 	return convertPathsToRouteSegments(cityPaths)
 }
+

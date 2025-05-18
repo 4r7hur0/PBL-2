@@ -16,6 +16,36 @@ type CoordinatorCallbackURLs struct {
 	AbortURL  string `json:"abort_url"`
 }
 
+
+type ActiveReservation struct {
+	TransactionID     string            `json:"transaction_id"`
+	VehicleID         string            `json:"vehicle_id"`
+	RequestID         string            `json:"request_id"` // ID da requisição de rota original
+	City              string            `json:"city"`
+	ReservationWindow ReservationWindow `json:"reservation_window"`
+	Status            string            `json:"status"` // Ex: "PREPARED", "COMMITTED"
+
+}
+
+type RemotePrepareResponse struct {
+	Status        string `json:"status"` // "PREPARED" ou "REJECTED"
+	TransactionID string `json:"transaction_id"`
+	Reason        string `json:"reason,omitempty"`
+}
+
+// Novas structs para comunicação inter-APIs (para os Passos 3 e 4)
+type RemotePrepareRequest struct {
+	TransactionID     string            `json:"transaction_id"`
+	VehicleID         string            `json:"vehicle_id"`
+	RequestID         string            `json:"request_id"`
+	City              string            `json:"city"` // A cidade para preparar
+	ReservationWindow ReservationWindow `json:"reservation_window"`
+}
+
+type RemoteCommitAbortRequest struct {
+	TransactionID string `json:"transaction_id"`
+}
+
 // ReservationStatus informa o veículo sobre o resultado da tentativa de reserva.
 type ReservationStatus struct {
     TransactionID  string         `json:"transaction_id"`
@@ -26,6 +56,12 @@ type ReservationStatus struct {
     ConfirmedRoute []RouteSegment `json:"confirmed_route,omitempty"` // Rota confirmada, se aplicável
 }
 
+
+// Constantes para Status da Reserva Ativa
+const (
+	StatusReservationPrepared  = "PREPARED"
+	StatusReservationCommitted = "COMMITTED"
+)
 
 // PrepareRequestBody é a estrutura para a requisição /prepare.
 type PrepareRequestBody struct {
@@ -119,4 +155,19 @@ type ChosenRouteMsg struct {
 	RequestID string         `json:"request_id"` // ID único para esta requisição de rota
 	VehicleID string         `json:"vehicle_id"`
 	Route     []RouteSegment `json:"route"`
+}
+
+// RegisterRequest é o payload para registrar uma API de cidade.
+type RegisterRequest struct {
+	CityManaged string `json:"city_managed"` // A cidade que esta API gerencia
+	ApiURL      string `json:"api_url"`      // A URL base da API (ex: http://localhost:8080)
+	EnterpriseName string `json:"enterprise_name"` // Nome da empresa/API
+}
+
+// DiscoverResponse é o payload da resposta de descoberta.
+type DiscoverResponse struct {
+	CityName       string `json:"city_name"`
+	ApiURL         string `json:"api_url"`
+	EnterpriseName string `json:"enterprise_name,omitempty"`
+	Found          bool   `json:"found"`
 }

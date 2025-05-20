@@ -13,8 +13,9 @@ COPY registry ./registry
 
 WORKDIR /app/api
 
-RUN go build -o /app/api
+RUN go build -o /app/api-server
 
 FROM alpine:3.19
 
-CMD [ "./api" ]
+COPY --from=builder /app/api-server /app/api-server
+CMD ["/app/api-server"]

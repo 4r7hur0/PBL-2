@@ -13,4 +13,4 @@ WORKDIR /app/registry/registry_server
 
 RUN go build -o /app/registry_server
 
-CMD [ "./registry_server" ]
+CMD ["/app/registry_server"]

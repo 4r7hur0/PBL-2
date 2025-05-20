@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/4r7hur0/PBL-2/schemas"
@@ -12,7 +13,11 @@ import (
 
 func main() {
 	// Initialize the MQTT client
-	client := initializeMQTTClient("tcp://localhost:1883")
+	broker := os.Getenv("MQTT_BROKER")
+	if broker == "" {
+		broker = "tcp://localhost:1883" // Default broker address
+	}
+	client := initializeMQTTClient(broker)
 
 	CarID := generateCarID()
 	fmt.Printf("Car ID: %s\n", CarID)

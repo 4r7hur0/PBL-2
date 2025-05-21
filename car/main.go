@@ -26,8 +26,10 @@ func main() {
 	responseChannel := make(chan schemas.RouteReservationOptions)
 	finalResponse := make(chan schemas.ReservationStatus)
 
+	topic := fmt.Sprintf("car/reservation/status/%s", CarID)
+
 	go func() {
-		subscribeToTopic(client, "car/reservation/status/"+CarID, func(c mqtt.Client, m mqtt.Message) {
+		subscribeToTopic(client, topic, func(c mqtt.Client, m mqtt.Message) {
 			var resp schemas.ReservationStatus
 			err := json.Unmarshal(m.Payload(), &resp)
 			if err != nil {
@@ -145,8 +147,8 @@ func main() {
 
 		fmt.Println("\nWaiting for response...")
 		finalMsg := <-finalResponse
-		fmt.Printf("Response received: %v\n", finalMsg)
-
+		fmt.Printf("Response received: %v\n", finalMsg.Message)
+		time.Sleep(5 * time.Minute)
 	}
 
 }

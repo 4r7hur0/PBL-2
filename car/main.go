@@ -24,11 +24,17 @@ func main() {
 
 	// Channel to receive messages from the MQTT broker
 	responseChannel := make(chan schemas.RouteReservationOptions)
-	finalResponse := make(chan string)
+	finalResponse := make(chan schemas.ReservationStatus)
 
 	go func() {
-		subscribeToTopic(client, "car/final/"+CarID, func(c mqtt.Client, m mqtt.Message) {
-			finalResponse <- string(m.Payload())
+		subscribeToTopic(client, "car/reservation/status/"+CarID, func(c mqtt.Client, m mqtt.Message) {
+			var resp schemas.ReservationStatus
+			err := json.Unmarshal(m.Payload(), &resp)
+			if err != nil {
+				fmt.Printf("Error deserializing message: %v\n", err)
+				return
+			}
+			finalResponse <- resp
 		})
 	}()
 

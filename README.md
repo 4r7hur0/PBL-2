@@ -2,6 +2,16 @@
 
 ## Para rodar a API
 
+Antes de rodar a API, é necessário navegar para o diretório do registry, esse servidor é responsável por descobrir as URLs das APIs das cidades, se ele não for inicializado a comunicação entre cidades não funcionará:
+
+`cd registry/registry-server`
+
+Após isso, deve ser definida a porta do registry por meio da variável de ambiente `REGISTRY_PORT` e rodar o arquivo: 
+
+$env:REGISTRY_PORT="9000" 
+
+`go run .` 
+
 Para rodar a API é necessário navegar para o diretório da api, começando por 
 
 `cd api/`
@@ -27,8 +37,7 @@ go run .
 $env:ENTERPRISE_NAME = "SertaoCarga"
 $env:ENTERPRISE_PORT = "8082"
 $env:OWNED_CITY = "Feira de Santana"
-$env:POSTS_QUANTITY = "1"
-$env:REGISTRY_URL="http://localhost:9000"
+ $env:REGISTRY_URL="http://localhost:9000"
 
 go run .
 

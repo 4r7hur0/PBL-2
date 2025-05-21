@@ -1,8 +1,4 @@
-docker run -d \
-  --name mosquitto \
-  -p 1883:1883 \
-  -v /home/user/PBL-2/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf \
-  eclipse-mosquitto
+docker run -d --name mosquitto --network rede-overlay -p 1883:1883 -v /home/tec502/PBL-2/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf eclipse-mosquitto
 
 Em caso de erro verificar o diretório.
 No laboratorio trocar user por tec502.

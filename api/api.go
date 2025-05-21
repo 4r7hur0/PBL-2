@@ -81,7 +81,7 @@ func main() {
 
 	// Inicializar MQTT
 
-	mqtt.InitializeMQTT("tcp://localhost:1883")
+	mqtt.InitializeMQTT("tcp://mosquitto:1883")
 	messageChannel := mqtt.StartListening(enterpriseName, 10)
 	chosenRouteTopic := fmt.Sprintf("car/route/%s", enterpriseName)
 	chosenRouteMessageChannel := mqtt.StartListening(chosenRouteTopic, 10)

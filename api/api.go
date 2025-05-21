@@ -304,6 +304,15 @@ func main() {
 		}
 	}()
 
+	// Goroutine para verificar e encerrar reservas
+		go func() {
+				ticker := time.NewTicker(10 * time.Second) // Verificar a cada 10 segundos
+				defer ticker.Stop()
+				for range ticker.C {
+						stateMgr.CheckAndEndReservations()
+				}
+		}()
+
 	// Configurar e iniciar o servidor Gin (HTTP)
 	r := gin.Default()
 	setupRouter(r, stateMgr, enterpriseName) // Passar dependências

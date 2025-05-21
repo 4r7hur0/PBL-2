@@ -71,7 +71,7 @@ func main() {
 	// Inicializar e usar o Registry Client
 	registryClient := rc.NewRegistryClient(registryURL)
 	
-	myAPIURL := fmt.Sprintf("http://localhost:%s", enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
+	myAPIURL := fmt.Sprintf("http://%v:%s",enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
 
 		err := registryClient.RegisterService(enterpriseName, ownedCity, myAPIURL)
 	if err != nil {
@@ -84,7 +84,7 @@ func main() {
 	
 	// Inicializar MQTT
 
-	mqtt.InitializeMQTT("tcp://localhost:1883") 
+	mqtt.InitializeMQTT("tcp://mosquitto:1883") 
 	messageChannel := mqtt.StartListening(enterpriseName, 10) 
 	chosenRouteTopic := fmt.Sprintf("car/route/%s", enterpriseName)
 	chosenRouteMessageChannel := mqtt.StartListening(chosenRouteTopic, 10)

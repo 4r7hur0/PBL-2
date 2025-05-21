@@ -52,22 +52,19 @@ func findAllPathsDFS(origin, destination string, citiesList []string) [][]string
 
 func convertPathsToRouteSegments(paths [][]string) [][]schemas.RouteSegment {
 	var routeSegmentsList [][]schemas.RouteSegment
-	utcNow := time.Now().UTC()
-
-	startTimeStr := utcNow
-	endTimeStr := utcNow.Add(1 * time.Hour)
-
 	for _, path := range paths {
 		var singleRoute []schemas.RouteSegment
+		currentTime := time.Now().UTC() 
 		for _, city := range path {
 			segment := schemas.RouteSegment{
 				City: city,
 				ReservationWindow: schemas.ReservationWindow{
-					StartTimeUTC: startTimeStr,
-					EndTimeUTC:   endTimeStr,
+					StartTimeUTC: currentTime,
+					EndTimeUTC:   currentTime.Add(1 * time.Minute),
 				},
 			}
 			singleRoute = append(singleRoute, segment)
+			currentTime = currentTime.Add(1 * time.Minute)
 		}
 		if len(singleRoute) > 0 {
 			routeSegmentsList = append(routeSegmentsList, singleRoute)

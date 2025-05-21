@@ -1,16 +1,15 @@
 version: "3.8"
 
 services:
-  mosquitto:
-    image: eclipse-mosquitto
-    container_name: mosquitto
-    ports:
-      - "1883:1883"
-    volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+  listenterprises:
+    build: 
+      context: .
+      dockerfile: ./listEnterprises/Dockerfile
+    container_name: listenterprises
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
     networks:
       - car-net
-
   car1:
     build:
       context: .
@@ -20,8 +19,6 @@ services:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
       - car-net
-    depends_on:
-      - mosquitto
 
   car2:
     build:
@@ -32,8 +29,6 @@ services:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
       - car-net
-    depends_on:
-      - mosquitto
 
   car3:
     build:
@@ -44,8 +39,6 @@ services:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
       - car-net
-    depends_on:
-      - mosquitto
 
   car4:
     build:
@@ -56,8 +49,6 @@ services:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
       - car-net
-    depends_on:
-      - mosquitto
 
   car5:
     build:
@@ -68,8 +59,6 @@ services:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
       - car-net
-    depends_on:
-      - mosquitto
 
 networks:
   car-net:

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/4r7hur0/PBL-2/schemas"
@@ -12,13 +13,32 @@ import (
 
 func main() {
 	// Initialize the MQTT client
-	client := initializeMQTTClient("tcp://localhost:1883")
+	broker := os.Getenv("MQTT_BROKER")
+	if broker == "" {
+		broker = "tcp://localhost:1883" // Default broker address
+	}
+	client := initializeMQTTClient(broker)
 
 	CarID := generateCarID()
 	fmt.Printf("Car ID: %s\n", CarID)
 
 	// Channel to receive messages from the MQTT broker
 	responseChannel := make(chan schemas.RouteReservationOptions)
+	finalResponse := make(chan schemas.ReservationStatus)
+
+	topic := fmt.Sprintf("car/reservation/status/%s", CarID)
+
+	go func() {
+		subscribeToTopic(client, topic, func(c mqtt.Client, m mqtt.Message) {
+			var resp schemas.ReservationStatus
+			err := json.Unmarshal(m.Payload(), &resp)
+			if err != nil {
+				fmt.Printf("Error deserializing message: %v\n", err)
+				return
+			}
+			finalResponse <- resp
+		})
+	}()
 
 	go func() {
 		// Subscribe to the topic
@@ -56,6 +76,7 @@ func main() {
 		}
 	}
 
+	// Main loop to choose random cities and publish charging requests
 	for {
 		origin, destination := ChooseTwoRandomCities()
 		if origin == "" && destination == "" {
@@ -82,7 +103,7 @@ func main() {
 		rand.Seed(time.Now().UnixNano())
 		randomIndex := rand.Intn(len(response.Routes))
 		selectedRoute := response.Routes[randomIndex]
-				fmt.Println("\nRota escolhida:")
+		fmt.Println("\nChoose route:")
 		if len(selectedRoute) == 0 {
 			fmt.Println("  No route segments provided.")
 		} else {
@@ -91,10 +112,9 @@ func main() {
 				end := segment.ReservationWindow.EndTimeUTC.Format("15:04")
 				date := segment.ReservationWindow.StartTimeUTC.Format("02/01/2006")
 
-				fmt.Printf("  Etapa %d: Cidade: %s, Janela de Reserva: %s até %s - %s\n", i+1, segment.City, start, end, date)
+				fmt.Printf("  step %d: City: %s, window reserve: %s at %s - %s\n", i+1, segment.City, start, end, date)
 			}
 		}
-
 
 		// Publish the route reservation
 		chosenRouteMsg := schemas.ChosenRouteMsg{
@@ -119,16 +139,16 @@ func main() {
 		fmt.Println("\nReserva de rota publicada:")
 
 		for i, segment := range selectedRoute {
-		start := segment.ReservationWindow.StartTimeUTC.Format("15:04")
-		end := segment.ReservationWindow.EndTimeUTC.Format("15:04")
-		date := segment.ReservationWindow.StartTimeUTC.Format("02/01/2006")
-		fmt.Printf("  Etapa %d: %s | Janela: %s até %s - %s\n", i+1, segment.City, start, end, date)}
-
+			start := segment.ReservationWindow.StartTimeUTC.Format("15:04")
+			end := segment.ReservationWindow.EndTimeUTC.Format("15:04")
+			date := segment.ReservationWindow.StartTimeUTC.Format("02/01/2006")
+			fmt.Printf("  step %d: %s | window: %s at %s - %s\n", i+1, segment.City, start, end, date)
+		}
 
 		fmt.Println("\nWaiting for response...")
-		response = <-responseChannel
-		fmt.Printf("Response received: %v\n", response)
-
+		finalMsg := <-finalResponse
+		fmt.Printf("Response received: %v\n", finalMsg.Message)
+		time.Sleep(5 * time.Minute)
 	}
 
 }

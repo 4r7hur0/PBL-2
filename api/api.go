@@ -1,47 +1,44 @@
 package main
 
 import (
-	"encoding/json" 
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"log"      
-	"net/http"      
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
-	"io"
-	"bytes"
-
 
 	"github.com/4r7hur0/PBL-2/api/mqtt"
 	"github.com/4r7hur0/PBL-2/api/router"
 	"github.com/4r7hur0/PBL-2/api/state"
-	rc "github.com/4r7hur0/PBL-2/registry/registry_client" 
-	"github.com/4r7hur0/PBL-2/schemas"   
-	"github.com/google/uuid"      
+	rc "github.com/4r7hur0/PBL-2/registry/registry_client"
+	"github.com/4r7hur0/PBL-2/schemas"
 	"github.com/gin-gonic/gin"
-       
+	"github.com/google/uuid"
 )
 
 var (
 	// Variáveis globais para a configuração desta instância da API
-	enterpriseName    string
-	enterprisePort    string
-	ownedCity         string 
-	postsQuantity     int
-	stateMgr          *state.StateManager 
-	allSystemCities   []string 
+	enterpriseName  string
+	enterprisePort  string
+	ownedCity       string
+	postsQuantity   int
+	stateMgr        *state.StateManager
+	allSystemCities []string
 	registryClient  *rc.RegistryClient // Cliente do Registry
 
 )
 
 func main() {
-	
+
 	enterpriseName := os.Getenv("ENTERPRISE_NAME")
 	enterprisePort := os.Getenv("ENTERPRISE_PORT")
 	postsQuantityStr := os.Getenv("POSTS_QUANTITY")
-	ownedCity = os.Getenv("OWNED_CITY") 
+	ownedCity = os.Getenv("OWNED_CITY")
 	registryURL := os.Getenv("REGISTRY_URL") // Ex: http://localhost:9000
-
 
 	if enterpriseName == "" {
 		fmt.Println("AVISO: ENTERPRISE_NAME não definido. Usando 'SolAtlantico'.")
@@ -70,39 +67,38 @@ func main() {
 
 	// Inicializar e usar o Registry Client
 	registryClient := rc.NewRegistryClient(registryURL)
-	
-	myAPIURL := fmt.Sprintf("http://%v:%s",enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
+  
+	myAPIURL := fmt.Sprintf("http://%v:%s", enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
 
-		err := registryClient.RegisterService(enterpriseName, ownedCity, myAPIURL)
+	err := registryClient.RegisterService(enterpriseName, ownedCity, myAPIURL)
 	if err != nil {
 		log.Fatalf("[%s] Falha ao registrar no Registry: %v", enterpriseName, err)
 	} else {
 		log.Printf("[%s] Registrado com sucesso no Registry como gerenciador de '%s' em %s", enterpriseName, ownedCity, myAPIURL)
 	}
 
-	allSystemCities = []string{"Salvador", "Feira de Santana", "Ilheus"} 
-	
+	allSystemCities = []string{"Salvador", "Feira de Santana", "Ilheus"}
+
 	// Inicializar MQTT
 
-	mqtt.InitializeMQTT("tcp://mosquitto:1883") 
-	messageChannel := mqtt.StartListening(enterpriseName, 10) 
+	mqtt.InitializeMQTT("tcp://mosquitto:1883")
+	messageChannel := mqtt.StartListening(enterpriseName, 10)
 	chosenRouteTopic := fmt.Sprintf("car/route/%s", enterpriseName)
 	chosenRouteMessageChannel := mqtt.StartListening(chosenRouteTopic, 10)
-
 
 	// Goroutine para processar os pedidos de rota e retornar as opções de rota
 
 	go func() {
-		for messagePayload := range messageChannel { 
+		for messagePayload := range messageChannel {
 			fmt.Printf("[%s] Mensagem de REQUISIÇÃO DE ROTA recebida: %s\n", enterpriseName, messagePayload)
 
 			// 1. Deserializar a mensagem recebida (payload) para schemas.RouteRequest
 			var routeReq schemas.RouteRequest
-	
+
 			err := json.Unmarshal([]byte(messagePayload), &routeReq)
 			if err != nil {
 				log.Printf("[%s] Erro ao deserializar RouteRequest: %v. Mensagem original: %s", enterpriseName, err, messagePayload)
-				continue 
+				continue
 			}
 
 			// Validar se o VehicleID foi recebido
@@ -126,7 +122,6 @@ func main() {
 				log.Printf("[%s] Origem ou destino não especificados na requisição. Mensagem: %s", enterpriseName, messagePayload)
 			}
 
-
 			// 4. Construir o objeto de resposta schemas.RouteReservationResponse
 			response := schemas.RouteReservationOptions{
 				RequestID: requestID,
@@ -144,7 +139,7 @@ func main() {
 			// 6. Publicar a resposta JSON para o tópico MQTT do carro (O carro escuta em um tópico que é o seu próprio ID)
 
 			responseTopic := routeReq.VehicleID
-			mqtt.Publish(responseTopic, string(responseBytes)) 
+			mqtt.Publish(responseTopic, string(responseBytes))
 
 			var formattedResp schemas.RouteReservationOptions
 			_ = json.Unmarshal(responseBytes, &formattedResp)
@@ -153,12 +148,12 @@ func main() {
 			fmt.Printf("Request ID: %s\n", formattedResp.RequestID)
 			fmt.Printf("Vehicle ID: %s\n\n", formattedResp.VehicleID)
 		}
-		}()
+	}()
 
-	// Goroutine para processar a rota escolhida pelo carro 
-		go func() {
+	// Goroutine para processar a rota escolhida pelo carro
+	go func() {
 		for messagePayload := range chosenRouteMessageChannel {
-			transactionID := uuid.New().String() 
+			transactionID := uuid.New().String()
 
 			fmt.Printf("[%s] TX[%s] Mensagem de ROTA ESCOLHIDA recebida no tópico '%s': %s\n", enterpriseName, transactionID, chosenRouteTopic, messagePayload)
 			fmt.Println("Iniciando 2PC...")
@@ -168,19 +163,19 @@ func main() {
 			err := json.Unmarshal([]byte(messagePayload), &chosenRoute)
 			if err != nil {
 				log.Printf("[%s] Erro ao deserializar ChosenRouteMsg: %v. Mensagem original: %s", enterpriseName, err, messagePayload)
-				continue 
+				continue
 			}
-					if chosenRoute.VehicleID == "" || chosenRoute.RequestID == "" {
-			log.Printf("[%s] TX[%s]: VehicleID ou RequestID ausente na ChosenRouteMsg. Payload: %s", enterpriseName, transactionID, messagePayload)
-			continue
-		}
-		if len(chosenRoute.Route) == 0 {
-			log.Printf("[%s] TX[%s]: Rota escolhida está vazia para VehicleID %s.", enterpriseName, transactionID, chosenRoute.VehicleID)
-			publishReservationStatus(chosenRoute.VehicleID, transactionID, "REJECTED", "Rota escolhida estava vazia", nil, enterpriseName)
+			if chosenRoute.VehicleID == "" || chosenRoute.RequestID == "" {
+				log.Printf("[%s] TX[%s]: VehicleID ou RequestID ausente na ChosenRouteMsg. Payload: %s", enterpriseName, transactionID, messagePayload)
+				continue
+			}
+			if len(chosenRoute.Route) == 0 {
+				log.Printf("[%s] TX[%s]: Rota escolhida está vazia para VehicleID %s.", enterpriseName, transactionID, chosenRoute.VehicleID)
+				publishReservationStatus(chosenRoute.VehicleID, transactionID, "REJECTED", "Rota escolhida estava vazia", nil, enterpriseName)
 
-			continue
-		}
-		// Fase de PREPARE
+				continue
+			}
+			// Fase de PREPARE
 			preparedParticipants := make(map[string]string) // cidade -> "local" ou URL da API remota
 			prepareOverallSuccess := true
 
@@ -199,9 +194,9 @@ func main() {
 					log.Printf("[%s] TX[%s]: SUCESSO PREPARE LOCAL para %s", enterpriseName, transactionID, cityToReserve)
 					preparedParticipants[cityToReserve] = "local"
 				} else { // Reserva REMOTA
-						log.Printf("[%s] TX[%s]: Descobrindo API para cidade remota '%s'", enterpriseName, transactionID, cityToReserve)
-						discoveredService, err_discover := registryClient.DiscoverService(cityToReserve)
-						if err_discover != nil || !discoveredService.Found {
+					log.Printf("[%s] TX[%s]: Descobrindo API para cidade remota '%s'", enterpriseName, transactionID, cityToReserve)
+					discoveredService, err_discover := registryClient.DiscoverService(cityToReserve)
+					if err_discover != nil || !discoveredService.Found {
 						log.Printf("[%s] TX[%s]: FALHA ao descobrir API para cidade remota '%s': %v. Found: %v", enterpriseName, transactionID, cityToReserve, err_discover, discoveredService.Found)
 						prepareOverallSuccess = false
 						break
@@ -232,7 +227,7 @@ func main() {
 					resp.Body.Close() // Fechar o corpo
 
 					if err := json.Unmarshal(bodyBytes, &remoteResp); err != nil {
- 						log.Printf("[%s] TX[%s]: Erro ao deserializar resposta PREPARE REMOTO de %s (Status: %s, Corpo: %s): %v", enterpriseName, transactionID, cityToReserve, resp.Status, string(bodyBytes), err)
+						log.Printf("[%s] TX[%s]: Erro ao deserializar resposta PREPARE REMOTO de %s (Status: %s, Corpo: %s): %v", enterpriseName, transactionID, cityToReserve, resp.Status, string(bodyBytes), err)
 						prepareOverallSuccess = false
 						break
 					}
@@ -329,9 +324,9 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 	r.GET("/status", func(c *gin.Context) {
 		cName, maxP, activeR := sm.GetCityAvailability()
 		c.JSON(http.StatusOK, gin.H{
-			"enterprise": enterpriseName,
-			"managed_city": cName,
-			"max_posts": maxP,
+			"enterprise":          enterpriseName,
+			"managed_city":        cName,
+			"max_posts":           maxP,
 			"active_reservations": activeR,
 		})
 	})
@@ -361,7 +356,7 @@ func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName st
 	}
 	// Validação importante: esta API deve ser a "dona" da req.City
 	if req.City != ownedCity { // ownedCity é a variável global desta instância
-	    errMsg := fmt.Sprintf("Requisição de PREPARE REMOTO para cidade %s, mas esta API gerencia %s", req.City, ownedCity)
+		errMsg := fmt.Sprintf("Requisição de PREPARE REMOTO para cidade %s, mas esta API gerencia %s", req.City, ownedCity)
 		log.Printf("[%s] TX[%s]: %s", localEntName, req.TransactionID, errMsg)
 		c.JSON(http.StatusBadRequest, schemas.RemotePrepareResponse{Status: "REJECTED", TransactionID: req.TransactionID, Reason: errMsg})
 		return
@@ -381,7 +376,9 @@ func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName st
 
 func handleRemoteCommit(c *gin.Context, sm *state.StateManager, localEntName string) {
 	var req schemas.RemoteCommitAbortRequest
-	if err := c.ShouldBindJSON(&req); err != nil { /* ... erro ... */ return }
+	if err := c.ShouldBindJSON(&req); err != nil { /* ... erro ... */
+		return
+	}
 	log.Printf("[%s] TX[%s]: Recebido COMMIT REMOTO", localEntName, req.TransactionID)
 	sm.CommitReservation(req.TransactionID)
 	c.JSON(http.StatusOK, gin.H{"status": schemas.StatusReservationCommitted, "transaction_id": req.TransactionID})
@@ -389,12 +386,13 @@ func handleRemoteCommit(c *gin.Context, sm *state.StateManager, localEntName str
 
 func handleRemoteAbort(c *gin.Context, sm *state.StateManager, localEntName string) {
 	var req schemas.RemoteCommitAbortRequest
-	if err := c.ShouldBindJSON(&req); err != nil { /* ... erro ... */ return }
+	if err := c.ShouldBindJSON(&req); err != nil { /* ... erro ... */
+		return
+	}
 	log.Printf("[%s] TX[%s]: Recebido ABORT REMOTO", localEntName, req.TransactionID)
 	sm.AbortReservation(req.TransactionID)
 	c.JSON(http.StatusOK, gin.H{"status": "ABORTED", "transaction_id": req.TransactionID})
 }
-
 
 // Função auxiliar para publicar o status da reserva (ajustada para incluir enterpriseName nos logs)
 func publishReservationStatus(vehicleID, transactionID, status, message string, chosenRoute *schemas.ChosenRouteMsg, pubEnterpriseName string) {
@@ -415,4 +413,3 @@ func publishReservationStatus(vehicleID, transactionID, status, message string, 
 	mqtt.Publish(topic, string(payloadBytes))
 	log.Printf("[%s] TX[%s]: Status da reserva '%s' publicado para VehicleID %s no tópico %s.", pubEnterpriseName, transactionID, status, vehicleID, topic)
 }
-

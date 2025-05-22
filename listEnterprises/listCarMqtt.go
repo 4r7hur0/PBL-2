@@ -38,12 +38,17 @@ func initializeMQTTClient(broker string) mqtt.Client {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(broker)
 
-	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		panic(token.Error())
+	for {
+		client := mqtt.NewClient(opts)
+		if token := client.Connect(); token.Wait() && token.Error() != nil {
+			fmt.Printf("%v", token.Error())
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		fmt.Println("MQTT client connected to broker:", broker)
+		return client
 	}
 
-	return client
 }
 
 // publishEnterprises publishes a list of enterprises to a given topic

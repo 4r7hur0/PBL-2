@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -11,13 +12,17 @@ func initializeMQTTClient(broker string) mqtt.Client {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(broker)
 
-	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		panic(token.Error())
-	}
+	for {
+		client := mqtt.NewClient(opts)
+		if token := client.Connect(); token.Wait() && token.Error() != nil {
+			fmt.Printf("Failed to connect to broker: %v. Retrying in 5 seconds...\n", token.Error())
+			time.Sleep(5 * time.Second)
+			continue
+		}
 
-	fmt.Println("MQTT client connected to broker:", broker)
-	return client
+		fmt.Println("MQTT client connected to broker:", broker)
+		return client
+	}
 }
 
 // subscribeToTopic subscribes to a given topic with a message handler

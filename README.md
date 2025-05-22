@@ -30,22 +30,15 @@ $env:ENTERPRISE_NAME = "SolAtlantico"
 $env:ENTERPRISE_PORT = "8081"
 $env:OWNED_CITY = "Salvador"
 $env:POSTS_QUANTITY = "2"
-$env:REGISTRY_URL="http://localhost:9000"
+$env:REGISTRY_URL="http://registry:9000"
 go run .
 
 
-$env:ENTERPRISE_NAME = "SertaoCarga"
-$env:ENTERPRISE_PORT = "8082"
-$env:OWNED_CITY = "Feira de Santana"
- $env:REGISTRY_URL="http://localhost:9000"
-
-go run .
-
-$env:ENTERPRISE_NAME = "CacauPower"
-$env:ENTERPRISE_PORT = "8083"
-$env:OWNED_CITY = "Ilheus"
-$env:POSTS_QUANTITY = "1"
-$env:REGISTRY_URL="http://localhost:9000"
+$env:ENTERPRISE_NAME=CacauPower
+$env:ENTERPRISE_PORT=8083
+$env:OWNED_CITY=Ilheus
+$env:POSTS_QUANTITY=1
+$env:REGISTRY_URL="http://registry:9000"
 
 go run .
 

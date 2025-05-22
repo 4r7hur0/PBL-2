@@ -1,19 +1,65 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  mosquitto:
-    image: eclipse-mosquitto
-    container_name: mosquitto
-    ports:
-      - "1883:1883"
-    volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
-
-  listcarmqtt:
-    build:
+  listenterprises:
+    build: 
       context: .
-      dockerfile: listEnterprises/Dockerfile
-    depends_on:
-      - mosquitto
+      dockerfile: ./listEnterprises/Dockerfile
+    container_name: listenterprises
     environment:
       - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - car-net
+  car1:
+    build:
+      context: .
+      dockerfile: ./car/Dockerfile
+    container_name: car1
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - car-net
+
+  car2:
+    build:
+      context: .
+      dockerfile: ./car/Dockerfile
+    container_name: car2
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - car-net
+
+  car3:
+    build:
+      context: .
+      dockerfile: ./car/Dockerfile
+    container_name: car3
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - car-net
+
+  car4:
+    build:
+      context: .
+      dockerfile: ./car/Dockerfile
+    container_name: car4
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - car-net
+
+  car5:
+    build:
+      context: .
+      dockerfile: ./car/Dockerfile
+    container_name: car5
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - car-net
+
+networks:
+  car-net:
+    driver: bridge

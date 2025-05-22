@@ -67,7 +67,7 @@ func main() {
 
 	// Inicializar e usar o Registry Client
 	registryClient := rc.NewRegistryClient(registryURL)
-
+  
 	myAPIURL := fmt.Sprintf("http://%v:%s", enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
 
 	err := registryClient.RegisterService(enterpriseName, ownedCity, myAPIURL)
@@ -298,6 +298,15 @@ func main() {
 			}
 		}
 	}()
+
+	// Goroutine para verificar e encerrar reservas
+		go func() {
+				ticker := time.NewTicker(10 * time.Second) // Verificar a cada 10 segundos
+				defer ticker.Stop()
+				for range ticker.C {
+						stateMgr.CheckAndEndReservations()
+				}
+		}()
 
 	// Configurar e iniciar o servidor Gin (HTTP)
 	r := gin.Default()

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
+	"encoding/json"
 
+  "github.com/4r7hur0/PBL-2/api/mqtt"
 	"github.com/4r7hur0/PBL-2/schemas" 
 )
 
@@ -107,6 +110,34 @@ func (m *StateManager) AbortReservation(transactionID string) {
 	if !aborted {
 		log.Printf("[StateManager-%s] TX[%s]: AVISO ABORT - Nenhuma reserva PREPARED encontrada para este TransactionID.", m.ownedCity, transactionID)
 	}
+}
+
+// CheckAndEndReservations verifica as reservas e envia notificações MQTT se necessário.
+func (m *StateManager) CheckAndEndReservations() {
+    m.cityDataMux.Lock()
+    defer m.cityDataMux.Unlock()
+
+    now := time.Now().UTC()
+    var keptReservations []schemas.ActiveReservation
+
+    for _, res := range m.cityData.ActiveReservations {
+        if res.Status == schemas.StatusReservationCommitted && now.After(res.ReservationWindow.EndTimeUTC) {
+            // Reserva expirou! Enviar notificação MQTT
+            endMessage := schemas.ReservationEndMessage{
+                VehicleID:     res.VehicleID,
+                TransactionID: res.TransactionID,
+                EndTimeUTC:    res.ReservationWindow.EndTimeUTC,
+                Message:       "Reserva encerrada",
+            }
+            payloadBytes, _ := json.Marshal(endMessage)
+            mqtt.Publish(fmt.Sprintf("car/reservation/end/%s", res.VehicleID), string(payloadBytes)) // Tópico específico para fim de reserva
+            log.Printf("[StateManager-%s] TX[%s]: Reserva para veículo %s encerrada. Notificação MQTT enviada.", m.ownedCity, res.TransactionID, res.VehicleID)
+        } else {
+            keptReservations = append(keptReservations, res) // Manter reservas não expiradas
+        }
+    }
+
+    m.cityData.ActiveReservations = keptReservations // Atualizar a lista de reservas
 }
 
 // GetCityAvailability - pode ser útil para um endpoint de status

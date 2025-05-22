@@ -16,7 +16,6 @@ type CoordinatorCallbackURLs struct {
 	AbortURL  string `json:"abort_url"`
 }
 
-
 type ActiveReservation struct {
 	TransactionID     string            `json:"transaction_id"`
 	VehicleID         string            `json:"vehicle_id"`
@@ -26,6 +25,14 @@ type ActiveReservation struct {
 	Status            string            `json:"status"` // Ex: "PREPARED", "COMMITTED"
 
 }
+type ReservationEndMessage struct {
+    VehicleID     string    `json:"vehicle_id"`
+    TransactionID string    `json:"transaction_id"`
+    EndTimeUTC    time.Time `json:"end_time_utc"`
+    Message       string    `json:"message"` // Ex: "Reserva encerrada"
+}
+
+
 
 type RemotePrepareResponse struct {
 	Status        string `json:"status"` // "PREPARED" ou "REJECTED"

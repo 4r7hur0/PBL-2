@@ -1,3 +1,5 @@
+// chaincode/reservation/reservation_chaincode.go
+
 package main
 
 import (
@@ -8,38 +10,32 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-// ReservationAsset descreve os detalhes de uma reserva armazenada no ledger.
-// Usamos strings para timestamps para garantir consistência na serialização JSON.
+// SmartContract fornece as funções para gerenciar as reservas.
+type SmartContract struct {
+	contractapi.Contract
+}
+
+// ReservationAsset descreve a estrutura de dados que será salva no ledger.
+// O TransactionID da sua transação 2PC é uma chave primária perfeita aqui.
 type ReservationAsset struct {
-	TransactionID     string              `json:"transactionID"`     // ID da transação 2PC original, servirá como chave no ledger
-	OriginalRequestID string              `json:"originalRequestID"` // ID da requisição de rota original do carro
+	TransactionID     string              `json:"transactionID"`
+	OriginalRequestID string              `json:"originalRequestID"`
 	VehicleID         string              `json:"vehicleID"`
 	Route             []RouteSegmentAsset `json:"route"`
 	StatusOnChain     string              `json:"statusOnChain"` // Ex: "RESERVATION_RECORDED"
-	RecordedAt        string              `json:"recordedAt"`    // Timestamp de quando foi gravado no blockchain (ISO8601)
+	RecordedAt        string              `json:"recordedAt"`    // Timestamp do registro na blockchain
 }
 
-// RouteSegmentAsset é a representação de um trecho de rota para o chaincode.
+// RouteSegmentAsset é a representação de um trecho da rota para o chaincode.
 type RouteSegmentAsset struct {
 	City         string `json:"city"`
 	StartTimeUTC string `json:"startTimeUTC"` // Formato: "YYYY-MM-DDTHH:mm:ssZ"
 	EndTimeUTC   string `json:"endTimeUTC"`   // Formato: "YYYY-MM-DDTHH:mm:ssZ"
 }
 
-// SmartContract fornece as funções para gerenciar as reservas.
-type SmartContract struct {
-	contractapi.Contract
-}
-
-func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
-	fmt.Println("Chaincode de Reserva Inicializado (InitLedger não faz nada neste exemplo)")
-	return nil
-}
-
-// RecordReservation registra uma nova reserva no ledger.
-// Args: transactionID, originalRequestID, vehicleID, routeJSON (string JSON de []RouteSegmentAsset), statusOnChain
+// RecordReservation é a função que será chamada pela API para registrar uma nova reserva.
 func (s *SmartContract) RecordReservation(ctx contractapi.TransactionContextInterface, transactionID string, originalRequestID string, vehicleID string, routeJSON string, statusOnChain string) error {
-	// Verificar se a reserva já existe
+	// 1. Validação: Verifica se uma reserva com essa chave (TransactionID) já existe.
 	exists, err := s.ReservationExists(ctx, transactionID)
 	if err != nil {
 		return fmt.Errorf("falha ao verificar existência da reserva: %v", err)
@@ -48,19 +44,21 @@ func (s *SmartContract) RecordReservation(ctx contractapi.TransactionContextInte
 		return fmt.Errorf("a reserva com ID %s já existe", transactionID)
 	}
 
+	// 2. Deserialização: Converte a string JSON da rota para a struct Go.
 	var route []RouteSegmentAsset
 	err = json.Unmarshal([]byte(routeJSON), &route)
 	if err != nil {
-		return fmt.Errorf("falha ao deserializar os segmentos da rota: %v. JSON recebido: %s", err, routeJSON)
+		return fmt.Errorf("falha ao deserializar os segmentos da rota: %v", err)
 	}
 
+	// 3. Criação do Ativo: Monta o objeto ReservationAsset com todos os dados.
 	reservation := ReservationAsset{
 		TransactionID:     transactionID,
 		OriginalRequestID: originalRequestID,
 		VehicleID:         vehicleID,
 		Route:             route,
 		StatusOnChain:     statusOnChain,
-		RecordedAt:        time.Now().UTC().Format(time.RFC3339), // Timestamp atual em UTC ISO8601
+		RecordedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 
 	reservationBytes, err := json.Marshal(reservation)
@@ -68,17 +66,11 @@ func (s *SmartContract) RecordReservation(ctx contractapi.TransactionContextInte
 		return fmt.Errorf("falha ao serializar a reserva: %v", err)
 	}
 
-	// Coloca o estado no ledger usando o transactionID como chave
-	err = ctx.GetStub().PutState(transactionID, reservationBytes)
-	if err != nil {
-		return fmt.Errorf("falha ao registrar a reserva no ledger: %v", err)
-	}
-	fmt.Printf("Reserva %s registrada com sucesso.\n", transactionID)
-	return nil
+	// 4. Escrita no Ledger: Salva o ativo no ledger usando o TransactionID como chave.
+	return ctx.GetStub().PutState(transactionID, reservationBytes)
 }
 
-// QueryReservation retorna os detalhes de uma reserva armazenada no ledger.
-// Args: transactionID
+// QueryReservation permite consultar uma reserva específica pelo seu ID.
 func (s *SmartContract) QueryReservation(ctx contractapi.TransactionContextInterface, transactionID string) (*ReservationAsset, error) {
 	reservationBytes, err := ctx.GetStub().GetState(transactionID)
 	if err != nil {
@@ -97,8 +89,7 @@ func (s *SmartContract) QueryReservation(ctx contractapi.TransactionContextInter
 	return &reservation, nil
 }
 
-// ReservationExists verifica se uma reserva com o ID fornecido já existe no ledger.
-// Args: transactionID
+// ReservationExists verifica a existência de uma reserva.
 func (s *SmartContract) ReservationExists(ctx contractapi.TransactionContextInterface, transactionID string) (bool, error) {
 	reservationBytes, err := ctx.GetStub().GetState(transactionID)
 	if err != nil {
@@ -107,15 +98,14 @@ func (s *SmartContract) ReservationExists(ctx contractapi.TransactionContextInte
 	return reservationBytes != nil, nil
 }
 
-// Função main para iniciar o chaincode
+// main é o ponto de entrada para iniciar o chaincode.
 func main() {
 	chaincode, err := contractapi.NewChaincode(&SmartContract{})
 	if err != nil {
-		fmt.Printf("Erro ao criar chaincode de reserva: %s\n", err.Error())
+		fmt.Printf("Erro ao criar chaincode: %s\n", err.Error())
 		return
 	}
-
 	if err := chaincode.Start(); err != nil {
-		fmt.Printf("Erro ao iniciar chaincode de reserva: %s\n", err.Error())
+		fmt.Printf("Erro ao iniciar chaincode: %s\n", err.Error())
 	}
 }

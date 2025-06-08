@@ -26,13 +26,11 @@ type ActiveReservation struct {
 
 }
 type ReservationEndMessage struct {
-    VehicleID     string    `json:"vehicle_id"`
-    TransactionID string    `json:"transaction_id"`
-    EndTimeUTC    time.Time `json:"end_time_utc"`
-    Message       string    `json:"message"` // Ex: "Reserva encerrada"
+	VehicleID     string    `json:"vehicle_id"`
+	TransactionID string    `json:"transaction_id"`
+	EndTimeUTC    time.Time `json:"end_time_utc"`
+	Message       string    `json:"message"` // Ex: "Reserva encerrada"
 }
-
-
 
 type RemotePrepareResponse struct {
 	Status        string `json:"status"` // "PREPARED" ou "REJECTED"
@@ -55,14 +53,13 @@ type RemoteCommitAbortRequest struct {
 
 // ReservationStatus informa o veículo sobre o resultado da tentativa de reserva.
 type ReservationStatus struct {
-    TransactionID  string         `json:"transaction_id"`
-    VehicleID      string         `json:"vehicle_id"`
-    RequestID      string         `json:"request_id"` // ID da requisição de rota original
-    Status         string         `json:"status"`     // Ex: "CONFIRMED", "REJECTED"
-    Message        string         `json:"message"`
-    ConfirmedRoute []RouteSegment `json:"confirmed_route,omitempty"` // Rota confirmada, se aplicável
+	TransactionID  string         `json:"transaction_id"`
+	VehicleID      string         `json:"vehicle_id"`
+	RequestID      string         `json:"request_id"` // ID da requisição de rota original
+	Status         string         `json:"status"`     // Ex: "CONFIRMED", "REJECTED"
+	Message        string         `json:"message"`
+	ConfirmedRoute []RouteSegment `json:"confirmed_route,omitempty"` // Rota confirmada, se aplicável
 }
-
 
 // Constantes para Status da Reserva Ativa
 const (
@@ -142,8 +139,8 @@ type RouteReservationResponse struct {
 }
 
 type RouteReservationOptions struct {
-	RequestID string 			 `json:"request_id"` // ID único para esta requisição de rota
-	VehicleID string 			 `json:"vehicle_id"`
+	RequestID string           `json:"request_id"` // ID único para esta requisição de rota
+	VehicleID string           `json:"vehicle_id"`
 	Routes    [][]RouteSegment `json:"route"`
 }
 
@@ -166,8 +163,8 @@ type ChosenRouteMsg struct {
 
 // RegisterRequest é o payload para registrar uma API de cidade.
 type RegisterRequest struct {
-	CityManaged string `json:"city_managed"` // A cidade que esta API gerencia
-	ApiURL      string `json:"api_url"`      // A URL base da API (ex: http://localhost:8080)
+	CityManaged    string `json:"city_managed"`    // A cidade que esta API gerencia
+	ApiURL         string `json:"api_url"`         // A URL base da API (ex: http://localhost:8080)
 	EnterpriseName string `json:"enterprise_name"` // Nome da empresa/API
 }
 

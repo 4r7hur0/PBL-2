@@ -23,6 +23,7 @@ type ActiveReservation struct {
 	City              string            `json:"city"`
 	ReservationWindow ReservationWindow `json:"reservation_window"`
 	Status            string            `json:"status"` // Ex: "PREPARED", "COMMITTED"
+	CoordinatorURL    string            `json:"coordinator_url,omitempty"` // URL da API que iniciou o 2PC
 
 }
 type ReservationEndMessage struct {

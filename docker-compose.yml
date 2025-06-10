@@ -1,7 +1,6 @@
 version: "3.8"
 
 services:
-  # O serviço que publica a lista de empresas continua igual
   listenterprises:
     build: 
       context: .
@@ -9,11 +8,8 @@ services:
     container_name: listenterprises
     environment:
       - MQTT_BROKER=tcp://mosquitto:1883
-    # Conecta este serviço à rede 'rede-overlay'
     networks:
-      - default_network
-
-  # Os serviços dos carros continuam iguais
+      - car-net
   car1:
     build:
       context: .
@@ -22,11 +18,8 @@ services:
     environment:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
-      - default_network
-    depends_on:
-      - listenterprises
+      - car-net
 
-  # ... (car2, car3, car4, car5, iguais ao car1) ...
   car2:
     build:
       context: .
@@ -35,9 +28,7 @@ services:
     environment:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
-      - default_network
-    depends_on:
-      - listenterprises
+      - car-net
 
   car3:
     build:
@@ -47,9 +38,7 @@ services:
     environment:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
-      - default_network
-    depends_on:
-      - listenterprises
+      - car-net
 
   car4:
     build:
@@ -59,9 +48,7 @@ services:
     environment:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
-      - default_network
-    depends_on:
-      - listenterprises
+      - car-net
 
   car5:
     build:
@@ -71,73 +58,8 @@ services:
     environment:
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
-      - default_network
-    depends_on:
-      - listenterprises
-      
-  # =======================================================
-  # == NOVOS SERVIÇOS DOS CHARGING POINT WORKERS ==
-  # =======================================================
-  cpworker_sol_01:
-    build:
-      context: .
-      dockerfile: ./cpworker/Dockerfile
-    container_name: cpworker_sol_01
-    environment:
-      - MQTT_BROKER=tcp://mosquitto:1883
-      - ENTERPRISE_NAME=SolAtlantico
-      - WORKER_ID=CP-SAL-01
-    networks:
-      - default_network
-    depends_on:
-      - listenterprises
-
-  cpworker_sertao_01:
-    build:
-      context: .
-      dockerfile: ./cpworker/Dockerfile
-    container_name: cpworker_sertao_01
-    environment:
-      - MQTT_BROKER=tcp://mosquitto:1883
-      - ENTERPRISE_NAME=SertaoCarga
-      - WORKER_ID=CP-FSA-01
-    networks:
-      - default_network
-    depends_on:
-      - listenterprises
-
-  cpworker_sertao_02:
-    build:
-      context: .
-      dockerfile: ./cpworker/Dockerfile
-    container_name: cpworker_sertao_02
-    environment:
-      - MQTT_BROKER=tcp://mosquitto:1883
-      - ENTERPRISE_NAME=SertaoCarga
-      - WORKER_ID=CP-FSA-02
-    networks:
-      - default_network
-    depends_on:
-      - listenterprises
-
-  cpworker_cacau_01:
-    build:
-      context: .
-      dockerfile: ./cpworker/Dockerfile
-    container_name: cpworker_cacau_01
-    environment:
-      - MQTT_BROKER=tcp://mosquitto:1883
-      - ENTERPRISE_NAME=CacauPower
-      - WORKER_ID=CP-CAC-01
-    networks:
-      - default_network
-    depends_on:
-      - listenterprises
+      - car-net
 
 networks:
-  # Renomeamos a rede para 'default_network' para clareza
-  default_network:
-    # Definimos que esta rede é, na verdade, a rede externa 'rede-overlay'
-    # que você já criou com o comando 'docker network create'
-    name: rede-overlay
-    external: true
+  car-net:
+    driver: bridge

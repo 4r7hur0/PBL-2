@@ -1,4 +1,4 @@
-package chaincode
+package main
 
 import (
 	"encoding/json"
@@ -29,6 +29,13 @@ type ChargingTransaction struct {
 	ChargingStartTimeStampUTC string  `json:"chargingStartTimeStampUTC"`
 	ChargingEndTimeStampUTC   string  `json:"chargingEndTimeStampUTC"`
 	PaymantTimeStampUTC       string  `json:"paymentTimeStampUTC"`
+}
+
+type HistoricState struct {
+	TxId      string               `json:"txId"`
+	Timestamp string               `json:"timestamp"`
+	IsDelete  bool                 `json:"isDelete"`
+	Value     *ChargingTransaction `json:"value"`
 }
 
 func (s *smartContract) RegisterReserve(ctx contractapi.TransactionContextInterface, transactionID string, vehicleID string, routeJSON string) error {
@@ -168,6 +175,44 @@ func (s *smartContract) transactionExists(ctx contractapi.TransactionContextInte
 	return assetBytes != nil, nil
 }
 
+// GetTransactionHistory retorna o histórico de alterações de uma transação.
+func (s *smartContract) GetTransactionHistory(ctx contractapi.TransactionContextInterface, transactionID string) ([]*HistoricState, error) {
+	resultsIterator, err := ctx.GetStub().GetHistoryForKey(transactionID)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao obter histórico para a transação %s: %w", transactionID, err)
+	}
+	defer resultsIterator.Close()
+
+	var history []*HistoricState
+	for resultsIterator.HasNext() {
+		response, err := resultsIterator.Next()
+		if err != nil {
+			// Em algumas versões da Fabric, um erro aqui pode indicar o fim do iterador.
+			// Verifique o erro específico se encontrar problemas.
+			return nil, err
+		}
+
+		var asset ChargingTransaction
+		if !response.IsDelete {
+			// Deserializa o valor do estado se não for uma exclusão
+			err := json.Unmarshal(response.Value, &asset)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		historicState := HistoricState{
+			TxId:      response.TxId,
+			Timestamp: response.Timestamp.AsTime().Format(time.RFC3339),
+			IsDelete:  response.IsDelete,
+			Value:     &asset,
+		}
+		history = append(history, &historicState)
+	}
+
+	return history, nil
+}
+
 func main() {
 	chaincode, err := contractapi.NewChaincode(&smartContract{})
 	if err != nil {
@@ -177,4 +222,46 @@ func main() {
 	if err := chaincode.Start(); err != nil {
 		fmt.Printf("Error starting smart contract: %v", err)
 	}
+}
+
+func (s *smartContract) Ping(ctx contractapi.TransactionContextInterface) error {
+	// Pega o timestamp atual para registrar no ping
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+
+	// Cria uma estrutura simples para a resposta
+	pingData := struct {
+		Status    string `json:"status"`
+		Timestamp string `json:"timestamp"`
+	}{
+		Status:    "pong",
+		Timestamp: timestamp,
+	}
+
+	// Serializa a estrutura para JSON
+	pingBytes, err := json.Marshal(pingData)
+	if err != nil {
+		return fmt.Errorf("falha ao serializar a resposta do ping: %v", err)
+	}
+
+	// Escreve o estado no ledger com uma chave fixa "ping_status"
+	err = ctx.GetStub().PutState("ping_status", pingBytes)
+	if err != nil {
+		return fmt.Errorf("falha ao registrar o ping no ledger: %w", err)
+	}
+
+	fmt.Printf("Ping registrado com sucesso no ledger: %s\n", string(pingBytes))
+	return nil
+}
+
+// QueryPing lê o status do último ping do ledger.
+func (s *smartContract) QueryPing(ctx contractapi.TransactionContextInterface) (string, error) {
+	pingBytes, err := ctx.GetStub().GetState("ping_status")
+	if err != nil {
+		return "", fmt.Errorf("falha ao ler do world state: %v", err)
+	}
+	if pingBytes == nil {
+		return "", fmt.Errorf("nenhum ping foi registrado ainda")
+	}
+
+	return string(pingBytes), nil
 }

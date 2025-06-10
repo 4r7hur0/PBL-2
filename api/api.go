@@ -67,7 +67,7 @@ func main() {
 
 	// Inicializar e usar o Registry Client
 	registryClient := rc.NewRegistryClient(registryURL)
-  
+
 	myAPIURL := fmt.Sprintf("http://%v:%s", enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
 
 	err := registryClient.RegisterService(enterpriseName, ownedCity, myAPIURL)
@@ -152,8 +152,6 @@ func main() {
 
 	// Goroutine para processar a rota escolhida pelo carro
 	go func() {
-		localWorkersUsed := make(map[string]string) // cidade -> workerID
-
 		for messagePayload := range chosenRouteMessageChannel {
 			transactionID := uuid.New().String()
 
@@ -187,29 +185,14 @@ func main() {
 
 				if cityToReserve == ownedCity { // Reserva LOCAL
 					log.Printf("[%s] TX[%s]: Iniciando PREPARE LOCAL para %s em %s", enterpriseName, transactionID, chosenRoute.VehicleID, cityToReserve)
-
-					// Escolher worker disponível (implemente sua lógica, ex: round-robin)
-					workerID := escolherWorkerDisponivel() // Você precisa implementar essa função
-
-					// Reservar via MQTT
-					success, err := reserveWindowWithWorker(workerID, windowToReserve, transactionID)
+					success, err := stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve)
 					if !success || err != nil {
-						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (worker) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
+						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL para %s: %v", enterpriseName, transactionID, cityToReserve, err)
 						prepareOverallSuccess = false
 						break
 					}
-
-					// Só agora registrar no StateManager
-					success, err = stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve)
-					if !success || err != nil {
-						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (stateMgr) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
-						prepareOverallSuccess = false
-						break
-					}
-
-					// Salvar worker usado para commit/abort depois
+					log.Printf("[%s] TX[%s]: SUCESSO PREPARE LOCAL para %s", enterpriseName, transactionID, cityToReserve)
 					preparedParticipants[cityToReserve] = "local"
-					localWorkersUsed[cityToReserve] = workerID
 				} else { // Reserva REMOTA
 					log.Printf("[%s] TX[%s]: Descobrindo API para cidade remota '%s'", enterpriseName, transactionID, cityToReserve)
 					discoveredService, err_discover := registryClient.DiscoverService(cityToReserve)
@@ -228,7 +211,6 @@ func main() {
 						City:              cityToReserve, // Importante: enviar a cidade correta
 						ReservationWindow: windowToReserve,
 					}
-					remoteReqPayload.CoordinatorURL = myAPIURL // Adiciona a URL da própria API como coordenadora
 					payloadBytes, _ := json.Marshal(remoteReqPayload)
 
 					httpClient := &http.Client{Timeout: time.Second * 10} // Adicionar timeout
@@ -266,10 +248,8 @@ func main() {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL SUCESSO. Iniciando COMMIT.", enterpriseName, transactionID)
 				for city, participantTypeOrURL := range preparedParticipants {
 					if participantTypeOrURL == "local" {
-						workerID := localWorkersUsed[city]
-						sendCommitOrAbortToWorker(workerID, transactionID, "COMMIT") // ou "ABORT" no bloco de abort
-						stateMgr.CommitReservation(transactionID) // ou AbortReservation
-						log.Printf(...)
+						stateMgr.CommitReservation(transactionID)
+						log.Printf("[%s] TX[%s]: COMMIT LOCAL para %s", enterpriseName, transactionID, city)
 					} else {
 						// Enviar COMMIT REMOTO
 						log.Printf("[%s] TX[%s]: Enviando COMMIT REMOTO para %s (API: %s)", enterpriseName, transactionID, city, participantTypeOrURL)
@@ -291,6 +271,34 @@ func main() {
 						}
 					}
 				}
+
+				log.Printf("[%s] TX[%s]: Registrando transação confirmada na blockchain...", enterpriseName, transactionID)
+
+				// conecta ao gateway do fabric
+				gw, err := newGateway()
+				if err != nil {
+					log.Printf("[%s] TX[%s]: ERRO ao conectar ao Gateway do Fabric: %v", enterpriseName, transactionID, err)
+				} else {
+					defer gw.Close()
+
+					network := gw.GetNetwork(fabricChannelName)
+					contract := network.GetContract(fabricChaincodeName)
+
+					// serializa a rota escolhida para o formato JSON como esperado pelo contrato
+					routeJSON, err := json.Marshal(chosenRoute.Route)
+					if err != nil {
+						log.Printf("[%s] TX[%s]: ERRO ao serializar rota escolhida: %v", enterpriseName, transactionID, err)
+					}
+
+					// Submete a transação para o chaincode
+					_, err = contract.SubmitTransaction("CreateReservation", transactionID, chosenRoute.VehicleID, string(routeJSON))
+					if err != nil {
+						log.Printf("[%s] TX[%s]: ERRO - Falha ao submeter 'CreateReservation' na blockchain: %v", enterpriseName, transactionID, err)
+					} else {
+						log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
+					}
+				}
+
 				publishReservationStatus(chosenRoute.VehicleID, transactionID, "CONFIRMED", "Reserva confirmada com sucesso", &chosenRoute, enterpriseName)
 			} else {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL FALHOU. Iniciando ABORT.", enterpriseName, transactionID)
@@ -320,15 +328,13 @@ func main() {
 	}()
 
 	// Goroutine para verificar e encerrar reservas
-		go func() {
-				ticker := time.NewTicker(10 * time.Second) // Verificar a cada 10 segundos
-				defer ticker.Stop()
-				for range ticker.C {
-						stateMgr.CheckAndEndReservations()
-				}
-		}()
-
-		setupWorkerEventListener(stateMgr, enterpriseName, ownedCity, registryClient)
+	go func() {
+		ticker := time.NewTicker(10 * time.Second) // Verificar a cada 10 segundos
+		defer ticker.Stop()
+		for range ticker.C {
+			stateMgr.CheckAndEndReservations()
+		}
+	}()
 
 	// Configurar e iniciar o servidor Gin (HTTP)
 	r := gin.Default()
@@ -353,10 +359,6 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 		})
 	})
 
-	r.POST("/cost-update", func(c *gin.Context) {
-		handleCostUpdate(c, entName)
-	})
-
 	// Endpoints para serem chamados por outras APIs (participantes remotos do 2PC)
 	remoteGroup := r.Group("/2pc_remote")
 	{
@@ -370,76 +372,122 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 			handleRemoteAbort(c, sm, entName)
 		})
 	}
-}
 
-func setupWorkerEventListener(sm *state.StateManager, entName, myCity string, registryCl *rc.RegistryClient) {
-	// O cpworker publica em "enterprise/{NOME_DA_EMPRESA}/cp/{ID_DO_WORKER}/event"
-	// Usamos um wildcard (+) para ouvir de todos os workers desta empresa.
-	eventTopic := fmt.Sprintf("enterprise/%s/cp/+/event", entName)
-	eventChan := mqtt.StartListening(eventTopic, 10)
-	log.Printf("[%s] Ouvinte de eventos de worker iniciado no tópico: %s", entName, eventTopic)
-
-	go func() {
-		for msgPayload := range eventChan {
-			log.Printf("[%s] Evento recebido do worker: %s", entName, msgPayload)
-
-			var event map[string]interface{}
-			if err := json.Unmarshal([]byte(msgPayload), &event); err != nil {
-				log.Printf("[%s] Erro ao decodificar evento do worker: %v", entName, err)
-				continue
-			}
-
-			// Verifica se é o evento de passagem e cobrança
-			if command, ok := event["command"].(string); ok && command == "VEHICLE_PASSED_AND_CHARGED" {
-				txID, _ := event["transaction_id"].(string)
-				cost, _ := event["cost"].(float64)
-
-				// Recupera a URL da coordenadora que foi salva durante o PREPARE
-				coordinatorURL, found := sm.GetCoordinatorURL(txID)
-
-				if !found || coordinatorURL == "" {
-					// Isso é esperado se a transação foi puramente local.
-					log.Printf("[%s] TX[%s]: Custo recebido do worker para uma transação local. Nenhuma notificação necessária.", entName, txID)
-					// =======================================================
-					// == PONTO DE INTEGRAÇÃO FUTURO COM A BLOCKCHAIN (LOCAL) ==
-					// Se a transação foi local, esta API é a coordenadora.
-					// Ela deve atualizar o chaincode diretamente aqui.
-					log.Printf("CHAINCODE_ACTION: UpdateSegmentPassageStatus for TX[%s], City: %s, Cost: %.2f", txID, myCity, cost)
-					// =======================================================
-					continue
-				}
-
-				log.Printf("[%s] TX[%s]: Notificando a coordenadora em %s sobre o custo de %.2f", entName, txID, coordinatorURL, cost)
-
-				// Prepara o payload para enviar à coordenadora
-				updatePayload := schemas.CostUpdatePayload{
-					TransactionID: txID,
-					SegmentCity:   myCity,
-					Cost:          cost,
-				}
-				payloadBytes, _ := json.Marshal(updatePayload)
-
-				// Envia a requisição HTTP para a coordenadora
-				httpClient := &http.Client{Timeout: time.Second * 15}
-				resp, httpErr := httpClient.Post(fmt.Sprintf("%s/cost-update", coordinatorURL), "application/json", bytes.NewBuffer(payloadBytes))
-				if httpErr != nil {
-					log.Printf("[%s] TX[%s]: FALHA AO ENVIAR update de custo para a coordenadora %s: %v", entName, txID, coordinatorURL, httpErr)
-					// Em um sistema real, aqui entraria uma lógica de retry.
-				} else {
-					if resp.StatusCode != http.StatusOK {
-						bodyBytes, _ := io.ReadAll(resp.Body)
-						log.Printf("[%s] TX[%s]: Coordenadora em %s rejeitou o update de custo. Status: %s, Corpo: %s", entName, txID, coordinatorURL, resp.Status, string(bodyBytes))
-					} else {
-						log.Printf("[%s] TX[%s]: Update de custo enviado com sucesso para a coordenadora %s.", entName, txID, coordinatorURL)
-					}
-					resp.Body.Close()
-				}
-			}
-		}
-	}()
+	r.GET("/transactions/:id", handleGetTransactionDetails)
+	r.POST("/ping", handlePing)
+	r.GET("/ping", handleQueryPing)
 }
 
 // Handlers para os endpoints /2pc_remote/* (podem ficar aqui ou em um arquivo separado)
+
+// handlePing invoca a função Ping do chaincode para escrever no ledger.
+func handlePing(c *gin.Context) {
+	log.Println("Recebida requisição de PING para a blockchain")
+
+	// Conecta ao Gateway da Fabric
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("Erro ao conectar ao gateway da Fabric: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
+
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// Submete a transação "Ping". Usamos SubmitTransaction porque ela escreve no ledger.
+	log.Println("Submetendo transação 'Ping'...")
+	_, err = contract.SubmitTransaction("Ping")
+	if err != nil {
+		log.Printf("Erro ao submeter 'Ping': %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao executar transação 'Ping'", "details": err.Error()})
+		return
+	}
+
+	log.Println("SUCESSO - 'Ping' registrado na blockchain.")
+	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Ping registrado com sucesso na blockchain."})
+}
+
+// handleQueryPing invoca a função QueryPing do chaincode para ler o último ping.
+func handleQueryPing(c *gin.Context) {
+	log.Println("Recebida requisição para CONSULTAR PING na blockchain")
+
+	// Conecta ao Gateway da Fabric
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("Erro ao conectar ao gateway da Fabric: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
+
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// Consulta a função "QueryPing". Usamos EvaluateTransaction porque é uma leitura.
+	log.Println("Consultando 'QueryPing'...")
+	resultBytes, err := contract.EvaluateTransaction("QueryPing")
+	if err != nil {
+		log.Printf("Erro ao consultar 'QueryPing': %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Falha ao consultar Ping", "details": err.Error()})
+		return
+	}
+
+	log.Printf("SUCESSO - Resposta de QueryPing: %s", string(resultBytes))
+
+	// Retorna o resultado JSON diretamente para o cliente
+	var result map[string]interface{}
+	json.Unmarshal(resultBytes, &result)
+	c.JSON(http.StatusOK, result)
+}
+
+func handleGetTransactionDetails(c *gin.Context) {
+	transactionID := c.Param("id") // Pega o ID da transação da URL: /transactions/ALGUM_ID
+
+	log.Printf("Recebida requisição para CONSULTAR LEDGER para a TX: %s", transactionID)
+
+	// Conecta ao Gateway da Fabric
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("Erro ao conectar ao gateway da Fabric: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
+
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// 1. Obter o estado ATUAL da transação
+	log.Printf("Consultando estado atual da TX: %s", transactionID)
+	currentStateBytes, err := contract.EvaluateTransaction("QueryTransaction", transactionID)
+	if err != nil {
+		log.Printf("Erro ao consultar 'QueryTransaction' para TX %s: %v", transactionID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Transação não encontrada", "details": err.Error()})
+		return
+	}
+	var currentState schemas.TransactionState // Use o schema correspondente
+	json.Unmarshal(currentStateBytes, &currentState)
+
+	// 2. Obter o HISTÓRICO da transação
+	log.Printf("Consultando histórico da TX: %s", transactionID)
+	historyBytes, err := contract.EvaluateTransaction("GetTransactionHistory", transactionID)
+	if err != nil {
+		log.Printf("Erro ao consultar 'GetTransactionHistory' para TX %s: %v", transactionID, err)
+		// Se o histórico falhar, ainda podemos retornar o estado atual
+		c.JSON(http.StatusOK, gin.H{"currentState": currentState, "history": nil, "warning": "Não foi possível obter o histórico da transação."})
+		return
+	}
+	var history []map[string]interface{} // Use a generic type if HistoricState does not exist
+	json.Unmarshal(historyBytes, &history)
+
+	// 3. Retornar ambos os resultados
+	c.JSON(http.StatusOK, gin.H{
+		"currentState": currentState,
+		"history":      history,
+	})
+}
 
 func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName string) {
 	var req schemas.RemotePrepareRequest
@@ -456,7 +504,7 @@ func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName st
 	}
 
 	log.Printf("[%s] TX[%s]: Recebido PREPARE REMOTO para VehicleID %s na cidade %s", localEntName, req.TransactionID, req.VehicleID, req.City)
-	success, err := sm.PrepareReservation(req.TransactionID, req.VehicleID, req.RequestID, req.ReservationWindow, req.CoordinatorURL) // Passa a janela
+	success, err := sm.PrepareReservation(req.TransactionID, req.VehicleID, req.RequestID, req.ReservationWindow) // Passa a janela
 
 	if !success || err != nil {
 		log.Printf("[%s] TX[%s]: FALHA PREPARE REMOTO (interno): %v", localEntName, req.TransactionID, err)
@@ -465,25 +513,6 @@ func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName st
 	}
 	log.Printf("[%s] TX[%s]: SUCESSO PREPARE REMOTO (interno)", localEntName, req.TransactionID)
 	c.JSON(http.StatusOK, schemas.RemotePrepareResponse{Status: schemas.StatusReservationPrepared, TransactionID: req.TransactionID})
-}
-
-func handleCostUpdate(c *gin.Context, localEntName string) {
-	var payload schemas.CostUpdatePayload // Supondo que esta struct exista em schemas/company.go
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payload", "details": err.Error()})
-		return
-	}
-
-	log.Printf("[%s] TX[%s]: Recebido UPDATE DE CUSTO da cidade '%s'. Custo: %.2f", localEntName, payload.TransactionID, payload.SegmentCity, payload.Cost)
-
-	// =======================================================
-	// == PONTO DE INTEGRAÇÃO FUTURO COM A BLOCKCHAIN ==
-	// Aqui você chamaria a função para atualizar o chaincode.
-	// Por exemplo: chaincode.UpdateSegmentCost(payload.TransactionID, payload.SegmentCity, payload.Cost)
-	log.Printf("CHAINCODE_ACTION: UpdateSegmentPassageStatus for TX[%s], City: %s, Cost: %.2f", payload.TransactionID, payload.SegmentCity, payload.Cost)
-	// =======================================================
-
-	c.JSON(http.StatusOK, gin.H{"status": "Cost update received successfully"})
 }
 
 func handleRemoteCommit(c *gin.Context, sm *state.StateManager, localEntName string) {
@@ -524,74 +553,4 @@ func publishReservationStatus(vehicleID, transactionID, status, message string, 
 	payloadBytes, _ := json.Marshal(statusPayload)
 	mqtt.Publish(topic, string(payloadBytes))
 	log.Printf("[%s] TX[%s]: Status da reserva '%s' publicado para VehicleID %s no tópico %s.", pubEnterpriseName, transactionID, status, vehicleID, topic)
-}
-
-// Função para reservar janela em um ChargingPointWorker via MQTT
-func reserveWindowWithWorker(workerID string, window schemas.ReservationWindow, transactionID string) (bool, error) {
-    // 1. Publicar QUERY_AVAILABILITY
-    queryMsg := map[string]interface{}{
-        "command": "QUERY_AVAILABILITY",
-        "window":  window,
-    }
-    queryBytes, _ := json.Marshal(queryMsg)
-    queryTopic := fmt.Sprintf("enterprise/%s/cp/%s/command", enterpriseName, workerID)
-    mqtt.Publish(queryTopic, string(queryBytes))
-
-    // 2. Esperar resposta de disponibilidade
-    responseTopic := fmt.Sprintf("enterprise/%s/cp/%s/response", enterpriseName, workerID)
-    respChan := mqtt.StartListening(responseTopic, 1)
-    select {
-    case respPayload := <-respChan:
-        var resp map[string]interface{}
-        if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
-            return false, fmt.Errorf("erro ao decodificar resposta do worker: %v", err)
-        }
-        available, _ := resp["available"].(bool)
-        if !available {
-            return false, nil
-        }
-    case <-time.After(5 * time.Second):
-        return false, fmt.Errorf("timeout esperando resposta do worker")
-    }
-
-    // 3. Publicar PREPARE_RESERVE_WINDOW
-    prepareMsg := map[string]interface{}{
-        "command":        "PREPARE_RESERVE_WINDOW",
-        "window":         window,
-        "transaction_id": transactionID,
-    }
-    prepareBytes, _ := json.Marshal(prepareMsg)
-    mqtt.Publish(queryTopic, string(prepareBytes))
-
-    // 4. Esperar resposta do PREPARE
-    select {
-    case respPayload := <-respChan:
-        var resp map[string]interface{}
-        if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
-            return false, fmt.Errorf("erro ao decodificar resposta do worker: %v", err)
-        }
-        success, _ := resp["success"].(bool)
-        return success, nil
-    case <-time.After(5 * time.Second):
-        return false, fmt.Errorf("timeout esperando resposta do worker")
-    }
-}
-
-// Exemplo de uso no fluxo de PREPARE local (dentro da goroutine de rota escolhida):
-// workerID := escolherWorkerDisponivel()
-// success, err := reserveWindowWithWorker(workerID, window, transactionID)
-// if !success || err != nil {
-//     // Falha no prepare local
-//     // ...tratar erro...
-// }
-
-// Para COMMIT/ABORT:
-func sendCommitOrAbortToWorker(workerID, transactionID, command string) {
-    msg := map[string]interface{}{
-        "command":        command, // "COMMIT" ou "ABORT"
-        "transaction_id": transactionID,
-    }
-    msgBytes, _ := json.Marshal(msg)
-    topic := fmt.Sprintf("enterprise/%s/cp/%s/command", enterpriseName, workerID)
-    mqtt.Publish(topic, string(msgBytes))
 }

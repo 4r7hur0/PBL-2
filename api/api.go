@@ -152,6 +152,8 @@ func main() {
 
 	// Goroutine para processar a rota escolhida pelo carro
 	go func() {
+		localWorkersUsed := make(map[string]string) // cidade -> workerID
+
 		for messagePayload := range chosenRouteMessageChannel {
 			transactionID := uuid.New().String()
 
@@ -185,14 +187,29 @@ func main() {
 
 				if cityToReserve == ownedCity { // Reserva LOCAL
 					log.Printf("[%s] TX[%s]: Iniciando PREPARE LOCAL para %s em %s", enterpriseName, transactionID, chosenRoute.VehicleID, cityToReserve)
-					success, err := stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve)
+
+					// Escolher worker disponível (implemente sua lógica, ex: round-robin)
+					workerID := escolherWorkerDisponivel() // Você precisa implementar essa função
+
+					// Reservar via MQTT
+					success, err := reserveWindowWithWorker(workerID, windowToReserve, transactionID)
 					if !success || err != nil {
-						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL para %s: %v", enterpriseName, transactionID, cityToReserve, err)
+						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (worker) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
 						prepareOverallSuccess = false
 						break
 					}
-					log.Printf("[%s] TX[%s]: SUCESSO PREPARE LOCAL para %s", enterpriseName, transactionID, cityToReserve)
+
+					// Só agora registrar no StateManager
+					success, err = stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve)
+					if !success || err != nil {
+						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (stateMgr) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
+						prepareOverallSuccess = false
+						break
+					}
+
+					// Salvar worker usado para commit/abort depois
 					preparedParticipants[cityToReserve] = "local"
+					localWorkersUsed[cityToReserve] = workerID
 				} else { // Reserva REMOTA
 					log.Printf("[%s] TX[%s]: Descobrindo API para cidade remota '%s'", enterpriseName, transactionID, cityToReserve)
 					discoveredService, err_discover := registryClient.DiscoverService(cityToReserve)
@@ -248,8 +265,10 @@ func main() {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL SUCESSO. Iniciando COMMIT.", enterpriseName, transactionID)
 				for city, participantTypeOrURL := range preparedParticipants {
 					if participantTypeOrURL == "local" {
-						stateMgr.CommitReservation(transactionID)
-						log.Printf("[%s] TX[%s]: COMMIT LOCAL para %s", enterpriseName, transactionID, city)
+						workerID := localWorkersUsed[city]
+						sendCommitOrAbortToWorker(workerID, transactionID, "COMMIT") // ou "ABORT" no bloco de abort
+						stateMgr.CommitReservation(transactionID) // ou AbortReservation
+						log.Printf(...)
 					} else {
 						// Enviar COMMIT REMOTO
 						log.Printf("[%s] TX[%s]: Enviando COMMIT REMOTO para %s (API: %s)", enterpriseName, transactionID, city, participantTypeOrURL)
@@ -412,4 +431,74 @@ func publishReservationStatus(vehicleID, transactionID, status, message string, 
 	payloadBytes, _ := json.Marshal(statusPayload)
 	mqtt.Publish(topic, string(payloadBytes))
 	log.Printf("[%s] TX[%s]: Status da reserva '%s' publicado para VehicleID %s no tópico %s.", pubEnterpriseName, transactionID, status, vehicleID, topic)
+}
+
+// Função para reservar janela em um ChargingPointWorker via MQTT
+func reserveWindowWithWorker(workerID string, window schemas.ReservationWindow, transactionID string) (bool, error) {
+    // 1. Publicar QUERY_AVAILABILITY
+    queryMsg := map[string]interface{}{
+        "command": "QUERY_AVAILABILITY",
+        "window":  window,
+    }
+    queryBytes, _ := json.Marshal(queryMsg)
+    queryTopic := fmt.Sprintf("enterprise/%s/cp/%s/command", enterpriseName, workerID)
+    mqtt.Publish(queryTopic, string(queryBytes))
+
+    // 2. Esperar resposta de disponibilidade
+    responseTopic := fmt.Sprintf("enterprise/%s/cp/%s/response", enterpriseName, workerID)
+    respChan := mqtt.StartListening(responseTopic, 1)
+    select {
+    case respPayload := <-respChan:
+        var resp map[string]interface{}
+        if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
+            return false, fmt.Errorf("erro ao decodificar resposta do worker: %v", err)
+        }
+        available, _ := resp["available"].(bool)
+        if !available {
+            return false, nil
+        }
+    case <-time.After(5 * time.Second):
+        return false, fmt.Errorf("timeout esperando resposta do worker")
+    }
+
+    // 3. Publicar PREPARE_RESERVE_WINDOW
+    prepareMsg := map[string]interface{}{
+        "command":        "PREPARE_RESERVE_WINDOW",
+        "window":         window,
+        "transaction_id": transactionID,
+    }
+    prepareBytes, _ := json.Marshal(prepareMsg)
+    mqtt.Publish(queryTopic, string(prepareBytes))
+
+    // 4. Esperar resposta do PREPARE
+    select {
+    case respPayload := <-respChan:
+        var resp map[string]interface{}
+        if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
+            return false, fmt.Errorf("erro ao decodificar resposta do worker: %v", err)
+        }
+        success, _ := resp["success"].(bool)
+        return success, nil
+    case <-time.After(5 * time.Second):
+        return false, fmt.Errorf("timeout esperando resposta do worker")
+    }
+}
+
+// Exemplo de uso no fluxo de PREPARE local (dentro da goroutine de rota escolhida):
+// workerID := escolherWorkerDisponivel()
+// success, err := reserveWindowWithWorker(workerID, window, transactionID)
+// if !success || err != nil {
+//     // Falha no prepare local
+//     // ...tratar erro...
+// }
+
+// Para COMMIT/ABORT:
+func sendCommitOrAbortToWorker(workerID, transactionID, command string) {
+    msg := map[string]interface{}{
+        "command":        command, // "COMMIT" ou "ABORT"
+        "transaction_id": transactionID,
+    }
+    msgBytes, _ := json.Marshal(msg)
+    topic := fmt.Sprintf("enterprise/%s/cp/%s/command", enterpriseName, workerID)
+    mqtt.Publish(topic, string(msgBytes))
 }

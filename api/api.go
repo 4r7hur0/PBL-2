@@ -228,6 +228,7 @@ func main() {
 						City:              cityToReserve, // Importante: enviar a cidade correta
 						ReservationWindow: windowToReserve,
 					}
+					remoteReqPayload.CoordinatorURL = myAPIURL // Adiciona a URL da própria API como coordenadora
 					payloadBytes, _ := json.Marshal(remoteReqPayload)
 
 					httpClient := &http.Client{Timeout: time.Second * 10} // Adicionar timeout
@@ -327,6 +328,8 @@ func main() {
 				}
 		}()
 
+		setupWorkerEventListener(stateMgr, enterpriseName, ownedCity, registryClient)
+
 	// Configurar e iniciar o servidor Gin (HTTP)
 	r := gin.Default()
 	setupRouter(r, stateMgr, enterpriseName) // Passar dependências
@@ -350,6 +353,10 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 		})
 	})
 
+	r.POST("/cost-update", func(c *gin.Context) {
+		handleCostUpdate(c, entName)
+	})
+
 	// Endpoints para serem chamados por outras APIs (participantes remotos do 2PC)
 	remoteGroup := r.Group("/2pc_remote")
 	{
@@ -363,6 +370,73 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 			handleRemoteAbort(c, sm, entName)
 		})
 	}
+}
+
+func setupWorkerEventListener(sm *state.StateManager, entName, myCity string, registryCl *rc.RegistryClient) {
+	// O cpworker publica em "enterprise/{NOME_DA_EMPRESA}/cp/{ID_DO_WORKER}/event"
+	// Usamos um wildcard (+) para ouvir de todos os workers desta empresa.
+	eventTopic := fmt.Sprintf("enterprise/%s/cp/+/event", entName)
+	eventChan := mqtt.StartListening(eventTopic, 10)
+	log.Printf("[%s] Ouvinte de eventos de worker iniciado no tópico: %s", entName, eventTopic)
+
+	go func() {
+		for msgPayload := range eventChan {
+			log.Printf("[%s] Evento recebido do worker: %s", entName, msgPayload)
+
+			var event map[string]interface{}
+			if err := json.Unmarshal([]byte(msgPayload), &event); err != nil {
+				log.Printf("[%s] Erro ao decodificar evento do worker: %v", entName, err)
+				continue
+			}
+
+			// Verifica se é o evento de passagem e cobrança
+			if command, ok := event["command"].(string); ok && command == "VEHICLE_PASSED_AND_CHARGED" {
+				txID, _ := event["transaction_id"].(string)
+				cost, _ := event["cost"].(float64)
+
+				// Recupera a URL da coordenadora que foi salva durante o PREPARE
+				coordinatorURL, found := sm.GetCoordinatorURL(txID)
+
+				if !found || coordinatorURL == "" {
+					// Isso é esperado se a transação foi puramente local.
+					log.Printf("[%s] TX[%s]: Custo recebido do worker para uma transação local. Nenhuma notificação necessária.", entName, txID)
+					// =======================================================
+					// == PONTO DE INTEGRAÇÃO FUTURO COM A BLOCKCHAIN (LOCAL) ==
+					// Se a transação foi local, esta API é a coordenadora.
+					// Ela deve atualizar o chaincode diretamente aqui.
+					log.Printf("CHAINCODE_ACTION: UpdateSegmentPassageStatus for TX[%s], City: %s, Cost: %.2f", txID, myCity, cost)
+					// =======================================================
+					continue
+				}
+
+				log.Printf("[%s] TX[%s]: Notificando a coordenadora em %s sobre o custo de %.2f", entName, txID, coordinatorURL, cost)
+
+				// Prepara o payload para enviar à coordenadora
+				updatePayload := schemas.CostUpdatePayload{
+					TransactionID: txID,
+					SegmentCity:   myCity,
+					Cost:          cost,
+				}
+				payloadBytes, _ := json.Marshal(updatePayload)
+
+				// Envia a requisição HTTP para a coordenadora
+				httpClient := &http.Client{Timeout: time.Second * 15}
+				resp, httpErr := httpClient.Post(fmt.Sprintf("%s/cost-update", coordinatorURL), "application/json", bytes.NewBuffer(payloadBytes))
+				if httpErr != nil {
+					log.Printf("[%s] TX[%s]: FALHA AO ENVIAR update de custo para a coordenadora %s: %v", entName, txID, coordinatorURL, httpErr)
+					// Em um sistema real, aqui entraria uma lógica de retry.
+				} else {
+					if resp.StatusCode != http.StatusOK {
+						bodyBytes, _ := io.ReadAll(resp.Body)
+						log.Printf("[%s] TX[%s]: Coordenadora em %s rejeitou o update de custo. Status: %s, Corpo: %s", entName, txID, coordinatorURL, resp.Status, string(bodyBytes))
+					} else {
+						log.Printf("[%s] TX[%s]: Update de custo enviado com sucesso para a coordenadora %s.", entName, txID, coordinatorURL)
+					}
+					resp.Body.Close()
+				}
+			}
+		}
+	}()
 }
 
 // Handlers para os endpoints /2pc_remote/* (podem ficar aqui ou em um arquivo separado)
@@ -382,7 +456,7 @@ func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName st
 	}
 
 	log.Printf("[%s] TX[%s]: Recebido PREPARE REMOTO para VehicleID %s na cidade %s", localEntName, req.TransactionID, req.VehicleID, req.City)
-	success, err := sm.PrepareReservation(req.TransactionID, req.VehicleID, req.RequestID, req.ReservationWindow) // Passa a janela
+	success, err := sm.PrepareReservation(req.TransactionID, req.VehicleID, req.RequestID, req.ReservationWindow, req.CoordinatorURL) // Passa a janela
 
 	if !success || err != nil {
 		log.Printf("[%s] TX[%s]: FALHA PREPARE REMOTO (interno): %v", localEntName, req.TransactionID, err)
@@ -391,6 +465,25 @@ func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName st
 	}
 	log.Printf("[%s] TX[%s]: SUCESSO PREPARE REMOTO (interno)", localEntName, req.TransactionID)
 	c.JSON(http.StatusOK, schemas.RemotePrepareResponse{Status: schemas.StatusReservationPrepared, TransactionID: req.TransactionID})
+}
+
+func handleCostUpdate(c *gin.Context, localEntName string) {
+	var payload schemas.CostUpdatePayload // Supondo que esta struct exista em schemas/company.go
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payload", "details": err.Error()})
+		return
+	}
+
+	log.Printf("[%s] TX[%s]: Recebido UPDATE DE CUSTO da cidade '%s'. Custo: %.2f", localEntName, payload.TransactionID, payload.SegmentCity, payload.Cost)
+
+	// =======================================================
+	// == PONTO DE INTEGRAÇÃO FUTURO COM A BLOCKCHAIN ==
+	// Aqui você chamaria a função para atualizar o chaincode.
+	// Por exemplo: chaincode.UpdateSegmentCost(payload.TransactionID, payload.SegmentCity, payload.Cost)
+	log.Printf("CHAINCODE_ACTION: UpdateSegmentPassageStatus for TX[%s], City: %s, Cost: %.2f", payload.TransactionID, payload.SegmentCity, payload.Cost)
+	// =======================================================
+
+	c.JSON(http.StatusOK, gin.H{"status": "Cost update received successfully"})
 }
 
 func handleRemoteCommit(c *gin.Context, sm *state.StateManager, localEntName string) {

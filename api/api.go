@@ -67,7 +67,7 @@ func main() {
 
 	// Inicializar e usar o Registry Client
 	registryClient := rc.NewRegistryClient(registryURL)
-  
+
 	myAPIURL := fmt.Sprintf("http://%v:%s", enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
 
 	err := registryClient.RegisterService(enterpriseName, ownedCity, myAPIURL)
@@ -271,6 +271,34 @@ func main() {
 						}
 					}
 				}
+
+				log.Printf("[%s] TX[%s]: Registrando transação confirmada na blockchain...", enterpriseName, transactionID)
+
+				// conecta ao gateway do fabric
+				gw, err := newGateway()
+				if err != nil {
+					log.Printf("[%s] TX[%s]: ERRO ao conectar ao Gateway do Fabric: %v", enterpriseName, transactionID, err)
+				} else {
+					defer gw.Close()
+
+					network := gw.GetNetwork(fabricChannelName)
+					contract := network.GetContract(fabricChaincodeName)
+
+					// serializa a rota escolhida para o formato JSON como esperado pelo contrato
+					routeJSON, err := json.Marshal(chosenRoute.Route)
+					if err != nil {
+						log.Printf("[%s] TX[%s]: ERRO ao serializar rota escolhida: %v", enterpriseName, transactionID, err)
+					}
+
+					// Submete a transação para o chaincode
+					_, err = contract.SubmitTransaction("CreateReservation", transactionID, chosenRoute.VehicleID, string(routeJSON))
+					if err != nil {
+						log.Printf("[%s] TX[%s]: ERRO - Falha ao submeter 'CreateReservation' na blockchain: %v", enterpriseName, transactionID, err)
+					} else {
+						log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
+					}
+				}
+
 				publishReservationStatus(chosenRoute.VehicleID, transactionID, "CONFIRMED", "Reserva confirmada com sucesso", &chosenRoute, enterpriseName)
 			} else {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL FALHOU. Iniciando ABORT.", enterpriseName, transactionID)
@@ -300,13 +328,13 @@ func main() {
 	}()
 
 	// Goroutine para verificar e encerrar reservas
-		go func() {
-				ticker := time.NewTicker(10 * time.Second) // Verificar a cada 10 segundos
-				defer ticker.Stop()
-				for range ticker.C {
-						stateMgr.CheckAndEndReservations()
-				}
-		}()
+	go func() {
+		ticker := time.NewTicker(10 * time.Second) // Verificar a cada 10 segundos
+		defer ticker.Stop()
+		for range ticker.C {
+			stateMgr.CheckAndEndReservations()
+		}
+	}()
 
 	// Configurar e iniciar o servidor Gin (HTTP)
 	r := gin.Default()
@@ -344,9 +372,122 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 			handleRemoteAbort(c, sm, entName)
 		})
 	}
+
+	r.GET("/transactions/:id", handleGetTransactionDetails)
+	r.POST("/ping", handlePing)
+	r.GET("/ping", handleQueryPing)
 }
 
 // Handlers para os endpoints /2pc_remote/* (podem ficar aqui ou em um arquivo separado)
+
+// handlePing invoca a função Ping do chaincode para escrever no ledger.
+func handlePing(c *gin.Context) {
+	log.Println("Recebida requisição de PING para a blockchain")
+
+	// Conecta ao Gateway da Fabric
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("Erro ao conectar ao gateway da Fabric: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
+
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// Submete a transação "Ping". Usamos SubmitTransaction porque ela escreve no ledger.
+	log.Println("Submetendo transação 'Ping'...")
+	_, err = contract.SubmitTransaction("Ping")
+	if err != nil {
+		log.Printf("Erro ao submeter 'Ping': %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao executar transação 'Ping'", "details": err.Error()})
+		return
+	}
+
+	log.Println("SUCESSO - 'Ping' registrado na blockchain.")
+	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Ping registrado com sucesso na blockchain."})
+}
+
+// handleQueryPing invoca a função QueryPing do chaincode para ler o último ping.
+func handleQueryPing(c *gin.Context) {
+	log.Println("Recebida requisição para CONSULTAR PING na blockchain")
+
+	// Conecta ao Gateway da Fabric
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("Erro ao conectar ao gateway da Fabric: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
+
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// Consulta a função "QueryPing". Usamos EvaluateTransaction porque é uma leitura.
+	log.Println("Consultando 'QueryPing'...")
+	resultBytes, err := contract.EvaluateTransaction("QueryPing")
+	if err != nil {
+		log.Printf("Erro ao consultar 'QueryPing': %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Falha ao consultar Ping", "details": err.Error()})
+		return
+	}
+
+	log.Printf("SUCESSO - Resposta de QueryPing: %s", string(resultBytes))
+
+	// Retorna o resultado JSON diretamente para o cliente
+	var result map[string]interface{}
+	json.Unmarshal(resultBytes, &result)
+	c.JSON(http.StatusOK, result)
+}
+
+func handleGetTransactionDetails(c *gin.Context) {
+	transactionID := c.Param("id") // Pega o ID da transação da URL: /transactions/ALGUM_ID
+
+	log.Printf("Recebida requisição para CONSULTAR LEDGER para a TX: %s", transactionID)
+
+	// Conecta ao Gateway da Fabric
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("Erro ao conectar ao gateway da Fabric: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
+
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// 1. Obter o estado ATUAL da transação
+	log.Printf("Consultando estado atual da TX: %s", transactionID)
+	currentStateBytes, err := contract.EvaluateTransaction("QueryTransaction", transactionID)
+	if err != nil {
+		log.Printf("Erro ao consultar 'QueryTransaction' para TX %s: %v", transactionID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Transação não encontrada", "details": err.Error()})
+		return
+	}
+	var currentState schemas.TransactionState // Use o schema correspondente
+	json.Unmarshal(currentStateBytes, &currentState)
+
+	// 2. Obter o HISTÓRICO da transação
+	log.Printf("Consultando histórico da TX: %s", transactionID)
+	historyBytes, err := contract.EvaluateTransaction("GetTransactionHistory", transactionID)
+	if err != nil {
+		log.Printf("Erro ao consultar 'GetTransactionHistory' para TX %s: %v", transactionID, err)
+		// Se o histórico falhar, ainda podemos retornar o estado atual
+		c.JSON(http.StatusOK, gin.H{"currentState": currentState, "history": nil, "warning": "Não foi possível obter o histórico da transação."})
+		return
+	}
+	var history []map[string]interface{} // Use a generic type if HistoricState does not exist
+	json.Unmarshal(historyBytes, &history)
+
+	// 3. Retornar ambos os resultados
+	c.JSON(http.StatusOK, gin.H{
+		"currentState": currentState,
+		"history":      history,
+	})
+}
 
 func handleRemotePrepare(c *gin.Context, sm *state.StateManager, localEntName string) {
 	var req schemas.RemotePrepareRequest

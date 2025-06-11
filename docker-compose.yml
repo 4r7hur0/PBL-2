@@ -88,6 +88,96 @@ services:
     networks:
       - fabric_test_net
 
+  solatlantico-cp001:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile # Caminho para o Dockerfile do worker
+    container_name: solatlantico-cp001
+    depends_on:
+      - mosquitto
+      - solatlantico
+    environment:
+      - WORKER_ID=CP001
+      - ENTERPRISE_NAME=SolAtlantico
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net # Mesma rede dos outros serviços
+
+  solatlantico-cp002:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: solatlantico-cp002
+    depends_on:
+      - mosquitto
+      - solatlantico
+    environment:
+      - WORKER_ID=CP002
+      - ENTERPRISE_NAME=SolAtlantico
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  sertaocarga-cp001:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: sertaocarga-cp001
+    depends_on:
+      - mosquitto
+      - sertaocarga
+    environment:
+      - WORKER_ID=CP001
+      - ENTERPRISE_NAME=SertaoCarga
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  sertaocarga-cp002:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: sertaocarga-cp002
+    depends_on:
+      - mosquitto
+      - sertaocarga
+    environment:
+      - WORKER_ID=CP002
+      - ENTERPRISE_NAME=SertaoCarga
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  cacaupower-cp001:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: cacaupower-cp001
+    depends_on:
+      - mosquitto
+      - cacaupower
+    environment:
+      - WORKER_ID=CP001
+      - ENTERPRISE_NAME=CacauPower
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  cacaupower-cp002:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: cacaupower-cp002
+    depends_on:
+      - mosquitto
+      - cacaupower
+    environment:
+      - WORKER_ID=CP002
+      - ENTERPRISE_NAME=CacauPower
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
   listenterprises:
     build:
       context: .

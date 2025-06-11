@@ -322,15 +322,13 @@ func main() {
 					}
 
 					// Submete a transação para o chaincode
-					// Submete a transação para o chaincode
 					_, err = contract.SubmitTransaction("RegisterReserve", transactionID, chosenRoute.VehicleID, string(routeJSON))
 					if err != nil {
 						log.Printf("[%s] TX[%s]: ERRO - Falha ao submeter 'RegisterReserve' na blockchain: %v", enterpriseName, transactionID, err)
 					} else {
 						log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
-					} 
-				}
-
+					}
+          
 				publishReservationStatus(chosenRoute.VehicleID, transactionID, "CONFIRMED", "Reserva confirmada com sucesso", &chosenRoute, enterpriseName)
 			} else {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL FALHOU. Iniciando ABORT.", enterpriseName, transactionID)

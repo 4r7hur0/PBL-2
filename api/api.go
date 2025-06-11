@@ -29,7 +29,7 @@ var (
 	stateMgr        *state.StateManager
 	allSystemCities []string
 	registryClient  *rc.RegistryClient // Cliente do Registry
-
+	cpWorkerIDs     []string // IDs dos Charging Point Workers registrados nesta API
 )
 
 func main() {
@@ -59,6 +59,13 @@ func main() {
 			postsQuantity = 5
 		}
 	}
+	
+	// ADICIONE ESTE BLOCO PARA POPULAR OS WORKERS <<<
+    for i := 1; i <= postsQuantity; i++ {
+        workerID := fmt.Sprintf("CP%03d", i) // Gera IDs como CP001, CP002, etc.
+        cpWorkerIDs = append(cpWorkerIDs, workerID)
+    }
+    // FIM DO BLOCO ADICIONADO
 
 	log.Printf("Iniciando API para a empresa: %s na porta %s, gerenciando a cidade: %s com %d postos.", enterpriseName, enterprisePort, ownedCity, postsQuantity)
 
@@ -188,10 +195,15 @@ func main() {
 					log.Printf("[%s] TX[%s]: Iniciando PREPARE LOCAL para %s em %s", enterpriseName, transactionID, chosenRoute.VehicleID, cityToReserve)
 
 					// Escolher worker disponível (implemente sua lógica, ex: round-robin)
-					workerID := escolherWorkerDisponivel() // Você precisa implementar essa função
+					workerID, success, err := escolherWorkerDisponivel(windowToReserve, transactionID)
+					if !success || err != nil {
+						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL. Nenhum worker disponível para %s: %v", enterpriseName, transactionID, cityToReserve, err)
+						prepareOverallSuccess = false
+						break
+					}
 
 					// Reservar via MQTT
-					success, err := reserveWindowWithWorker(workerID, windowToReserve, transactionID)
+					success, err = stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve, myAPIURL) // Adicionado myAPIURL para o coordenador
 					if !success || err != nil {
 						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (worker) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
 						prepareOverallSuccess = false
@@ -547,14 +559,28 @@ func handleCostUpdate(c *gin.Context, localEntName string) {
 
 	log.Printf("[%s] TX[%s]: Recebido UPDATE DE CUSTO da cidade '%s'. Custo: %.2f", localEntName, payload.TransactionID, payload.SegmentCity, payload.Cost)
 
-	// =======================================================
-	// == PONTO DE INTEGRAÇÃO FUTURO COM A BLOCKCHAIN ==
-	// Aqui você chamaria a função para atualizar o chaincode.
-	// Por exemplo: chaincode.UpdateSegmentCost(payload.TransactionID, payload.SegmentCity, payload.Cost)
-	log.Printf("CHAINCODE_ACTION: UpdateSegmentPassageStatus for TX[%s], City: %s, Cost: %.2f", payload.TransactionID, payload.SegmentCity, payload.Cost)
-	// =======================================================
+	// Integração com a blockchain: chama o chaincode para atualizar o custo do segmento
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("[%s] TX[%s]: Erro ao conectar ao gateway da Fabric: %v", localEntName, payload.TransactionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
 
-	c.JSON(http.StatusOK, gin.H{"status": "Cost update received successfully"})
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// Chama a função do chaincode para atualizar o custo do segmento
+	_, err = contract.SubmitTransaction("UpdateSegmentCost", payload.TransactionID, payload.SegmentCity, fmt.Sprintf("%.2f", payload.Cost))
+	if err != nil {
+		log.Printf("[%s] TX[%s]: ERRO ao submeter 'UpdateSegmentCost' na blockchain: %v", localEntName, payload.TransactionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao atualizar custo na blockchain", "details": err.Error()})
+		return
+	}
+
+	log.Printf("[%s] TX[%s]: CHAINCODE_ACTION: UpdateSegmentCost for City: %s, Cost: %.2f", localEntName, payload.TransactionID, payload.SegmentCity, payload.Cost)
+	c.JSON(http.StatusOK, gin.H{"status": "Cost update registered on blockchain successfully"})
 }
 
 func handleRemoteCommit(c *gin.Context, sm *state.StateManager, localEntName string) {
@@ -665,4 +691,87 @@ func sendCommitOrAbortToWorker(workerID, transactionID, command string) {
     msgBytes, _ := json.Marshal(msg)
     topic := fmt.Sprintf("enterprise/%s/cp/%s/command", enterpriseName, workerID)
     mqtt.Publish(topic, string(msgBytes))
+}
+
+// Função para escutar eventos dos ChargingPointWorkers e acionar o cost-update
+func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity string, registryClient *rc.RegistryClient) {
+    eventTopic := fmt.Sprintf("enterprise/%s/cp/+/event", enterpriseName)
+    eventChan := mqtt.StartListening(eventTopic, 10)
+    go func() {
+        for payload := range eventChan {
+            var event map[string]interface{}
+            if err := json.Unmarshal([]byte(payload), &event); err != nil {
+                log.Printf("Erro ao decodificar evento do worker: %v", err)
+                continue
+            }
+            if event["command"] == "VEHICLE_PASSED_AND_CHARGED" {
+                transactionID, _ := event["transaction_id"].(string)
+                cost, _ := event["cost"].(float64)
+                // Se o worker enviar a cidade, use-a. Senão, use ownedCity.
+                segmentCity := ownedCity
+                if city, ok := event["city"].(string); ok && city != "" {
+                    segmentCity = city
+                }
+
+                // Descobrir se sou coordenador da transação
+                isCoordinator := sm.IsCoordinator(transactionID)
+                costPayload := schemas.CostUpdatePayload{
+                    TransactionID: transactionID,
+                    SegmentCity:   segmentCity,
+                    Cost:          cost,
+                }
+
+                // Descobrir URL do coordenador se não for eu
+                var costUpdateURL string
+                if isCoordinator {
+                    costUpdateURL = fmt.Sprintf("http://localhost:%s/cost-update", enterprisePort)
+                } else {
+                    // Descobrir coordenador pelo registry (ou pelo state, se você salvar o CoordinatorURL)
+                    coordinatorURL := sm.GetCoordinatorURL(transactionID)
+                    if coordinatorURL == "" {
+                        log.Printf("[%s] TX[%s]: Não foi possível determinar o coordenador para cost-update.", enterpriseName, transactionID)
+                        continue
+                    }
+                    costUpdateURL = fmt.Sprintf("%s/cost-update", coordinatorURL)
+                }
+
+                // Chama o endpoint /cost-update (POST)
+                go func() {
+                    body, _ := json.Marshal(costPayload)
+                    resp, err := http.Post(costUpdateURL, "application/json", bytes.NewBuffer(body))
+                    if err != nil {
+                        log.Printf("[%s] TX[%s]: Falha ao chamar /cost-update em %s: %v", enterpriseName, transactionID, costUpdateURL, err)
+                        return
+                    }
+                    defer resp.Body.Close()
+                    if resp.StatusCode != http.StatusOK {
+                        respBody, _ := io.ReadAll(resp.Body)
+                        log.Printf("[%s] TX[%s]: /cost-update retornou status %d: %s", enterpriseName, transactionID, resp.StatusCode, string(respBody))
+                    } else {
+                        log.Printf("[%s] TX[%s]: /cost-update chamado com sucesso em %s", enterpriseName, transactionID, costUpdateURL)
+                    }
+                }()
+            }
+        }
+    }()
+}
+
+unc escolherWorkerDisponivel(window schemas.ReservationWindow, transactionID string) (string, bool, error) {
+	for _, workerID := range cpWorkerIDs {
+		log.Printf("[%s] TX[%s]: Tentando reservar janela no worker '%s'", enterpriseName, transactionID, workerID)
+		success, err := reserveWindowWithWorker(workerID, window, transactionID)
+		if err != nil {
+			// Loga o erro mas continua tentando outros workers
+			log.Printf("[%s] TX[%s]: Erro ao tentar reservar no worker '%s': %v", enterpriseName, transactionID, workerID, err)
+			continue
+		}
+		if success {
+			// Sucesso! Retorna o ID do worker escolhido.
+			log.Printf("[%s] TX[%s]: Sucesso! Worker '%s' selecionado e preparado.", enterpriseName, transactionID, workerID)
+			return workerID, true, nil
+		}
+	}
+	// Se o loop terminar, nenhum worker estava disponível ou todos falharam.
+	log.Printf("[%s] TX[%s]: Nenhum worker disponível para a janela solicitada.", enterpriseName, transactionID)
+	return "", false, fmt.Errorf("nenhum charging point worker disponível na cidade %s para a janela solicitada", ownedCity)
 }

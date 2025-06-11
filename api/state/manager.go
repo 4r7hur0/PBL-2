@@ -129,6 +129,21 @@ func (m *StateManager) GetCoordinatorURL(transactionID string) (string, bool) {
 	return "", false
 }
 
+// IsCoordinator retorna true se esta instância é a coordenadora da transação.
+func (m *StateManager) IsCoordinator(transactionID string) bool {
+    m.cityDataMux.Lock()
+    defer m.cityDataMux.Unlock()
+
+    for _, res := range m.cityData.ActiveReservations {
+        if res.TransactionID == transactionID {
+            // Se a URL do coordenador for vazia ou "localhost" ou igual à URL desta instância, considere coordenador.
+            // Adapte conforme sua lógica de identificação.
+            return res.CoordinatorURL == "" || res.CoordinatorURL == "localhost" // ou compare com sua URL real
+        }
+    }
+    return false
+}
+
 // CheckAndEndReservations verifica as reservas e envia notificações MQTT se necessário.
 func (m *StateManager) CheckAndEndReservations() {
     m.cityDataMux.Lock()

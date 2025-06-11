@@ -673,13 +673,6 @@ func reserveWindowWithWorker(workerID string, window schemas.ReservationWindow, 
     }
 }
 
-// Exemplo de uso no fluxo de PREPARE local (dentro da goroutine de rota escolhida):
-// workerID := escolherWorkerDisponivel()
-// success, err := reserveWindowWithWorker(workerID, window, transactionID)
-// if !success || err != nil {
-//     // Falha no prepare local
-//     // ...tratar erro...
-// }
 
 // Para COMMIT/ABORT:
 func sendCommitOrAbortToWorker(workerID, transactionID, command string) {
@@ -726,8 +719,8 @@ func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity 
                     costUpdateURL = fmt.Sprintf("http://localhost:%s/cost-update", enterprisePort)
                 } else {
                     // Descobrir coordenador pelo registry (ou pelo state, se você salvar o CoordinatorURL)
-                    coordinatorURL := sm.GetCoordinatorURL(transactionID)
-                    if coordinatorURL == "" {
+                    coordinatorURL, found := sm.GetCoordinatorURL(transactionID)
+					if !found || coordinatorURL == "" { ... }
                         log.Printf("[%s] TX[%s]: Não foi possível determinar o coordenador para cost-update.", enterpriseName, transactionID)
                         continue
                     }
@@ -755,7 +748,7 @@ func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity 
     }()
 }
 
-unc escolherWorkerDisponivel(window schemas.ReservationWindow, transactionID string) (string, bool, error) {
+func escolherWorkerDisponivel(window schemas.ReservationWindow, transactionID string) (string, bool, error) {
 	for _, workerID := range cpWorkerIDs {
 		log.Printf("[%s] TX[%s]: Tentando reservar janela no worker '%s'", enterpriseName, transactionID, workerID)
 		success, err := reserveWindowWithWorker(workerID, window, transactionID)

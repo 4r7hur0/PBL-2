@@ -291,9 +291,9 @@ func main() {
 					}
 
 					// Submete a transação para o chaincode
-					_, err = contract.SubmitTransaction("CreateReservation", transactionID, chosenRoute.VehicleID, string(routeJSON))
+					_, err = contract.SubmitTransaction("RegisterReserve", transactionID, chosenRoute.VehicleID, string(routeJSON))
 					if err != nil {
-						log.Printf("[%s] TX[%s]: ERRO - Falha ao submeter 'CreateReservation' na blockchain: %v", enterpriseName, transactionID, err)
+						log.Printf("[%s] TX[%s]: ERRO - Falha ao submeter 'RegisterReserve' na blockchain: %v", enterpriseName, transactionID, err)
 					} else {
 						log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
 					}

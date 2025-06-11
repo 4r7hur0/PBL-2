@@ -40,7 +40,7 @@ func NewStateManager(ownedCity string, initialPostsForOwnedCity int) *StateManag
 }
 
 // PrepareReservation verifica e "pré-aloca" um posto na cidade gerenciada.
-func (m *StateManager) PrepareReservation(transactionID, vehicleID, requestID string, window schemas.ReservationWindow) (bool, error) {
+func (m *StateManager) PrepareReservation(transactionID, vehicleID, requestID string, window schemas.ReservationWindow, coordinatorURL string) (bool, error) {
 	m.cityDataMux.Lock()
 	defer m.cityDataMux.Unlock()
 
@@ -69,6 +69,7 @@ func (m *StateManager) PrepareReservation(transactionID, vehicleID, requestID st
 		ReservationWindow: window,
 		Status:            schemas.StatusReservationPrepared,
 	}
+	newRes.CoordinatorURL = coordinatorURL
 	m.cityData.ActiveReservations = append(m.cityData.ActiveReservations, newRes)
 	log.Printf("[StateManager-%s] TX[%s]: SUCESSO PREPARE. %d postos ocupados na janela. Reserva: %+v", m.ownedCity, transactionID, overlappingCount+1, newRes)
 	return true, nil
@@ -110,6 +111,37 @@ func (m *StateManager) AbortReservation(transactionID string) {
 	if !aborted {
 		log.Printf("[StateManager-%s] TX[%s]: AVISO ABORT - Nenhuma reserva PREPARED encontrada para este TransactionID.", m.ownedCity, transactionID)
 	}
+}
+
+// GetCoordinatorURL encontra e retorna a URL da API coordenadora para uma dada transação.
+func (m *StateManager) GetCoordinatorURL(transactionID string) (string, bool) {
+	m.cityDataMux.Lock()
+	defer m.cityDataMux.Unlock()
+
+	for _, res := range m.cityData.ActiveReservations {
+		if res.TransactionID == transactionID {
+			// Retorna a URL e um booleano indicando que foi encontrada.
+			return res.CoordinatorURL, true
+		}
+	}
+
+	// Retorna uma string vazia e false se a transação não for encontrada.
+	return "", false
+}
+
+// IsCoordinator retorna true se esta instância é a coordenadora da transação.
+func (m *StateManager) IsCoordinator(transactionID string) bool {
+    m.cityDataMux.Lock()
+    defer m.cityDataMux.Unlock()
+
+    for _, res := range m.cityData.ActiveReservations {
+        if res.TransactionID == transactionID {
+            // Se a URL do coordenador for vazia ou "localhost" ou igual à URL desta instância, considere coordenador.
+            // Adapte conforme sua lógica de identificação.
+            return res.CoordinatorURL == "" || res.CoordinatorURL == "localhost" // ou compare com sua URL real
+        }
+    }
+    return false
 }
 
 // CheckAndEndReservations verifica as reservas e envia notificações MQTT se necessário.

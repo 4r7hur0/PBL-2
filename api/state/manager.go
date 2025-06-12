@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 	"encoding/json"
+	"net/url"
+	"strings"
 
   "github.com/4r7hur0/PBL-2/api/mqtt"
 	"github.com/4r7hur0/PBL-2/schemas" 
@@ -24,55 +26,123 @@ type CityState struct {
 type StateManager struct {
 	ownedCity   string 
 	cityData    *CityState
+	enterpriseName string // Nome da empresa que gerencia esta cidade
 	cityDataMux *sync.Mutex
+	myAPIURL string // URL da API que gerencia este estado
+	cpWorkerIDs []string // IDs dos workers que estão processando reservas nesta cidade
 }
 
-func NewStateManager(ownedCity string, initialPostsForOwnedCity int) *StateManager {
-	log.Printf("[StateManager] Inicializando para a cidade: %s com %d postos.", ownedCity, initialPostsForOwnedCity)
-	return &StateManager{
-		ownedCity: ownedCity,
-		cityData: &CityState{
-			MaxPosts:           initialPostsForOwnedCity,
-			ActiveReservations: []schemas.ActiveReservation{},
-		},
-		cityDataMux: &sync.Mutex{},
-	}
+func NewStateManager(ownedCity string, initialPosts int, myAPIURL string, workerIDs []string) *StateManager {
+    log.Printf("[StateManager] Inicializando para a cidade: %s com %d postos.", ownedCity, initialPosts)
+
+    // Extrai o nome da empresa da URL da API (ex: http://solatlantico:8080)
+    // Esta é uma forma simples; pode ser melhorado se a URL for mais complexa.
+    var entName string
+    if u, err := url.Parse(myAPIURL); err == nil {
+        entName = strings.Split(u.Hostname(), ".")[0]
+    }
+
+    return &StateManager{
+        ownedCity:      ownedCity,
+        enterpriseName: entName, // Adicionado
+        myAPIURL:       myAPIURL,
+        cpWorkerIDs:    workerIDs, // Adicionado
+        cityData: &CityState{
+            MaxPosts:           initialPosts,
+            ActiveReservations: []schemas.ActiveReservation{},
+        },
+        cityDataMux: &sync.Mutex{},
+    }
 }
 
 // PrepareReservation verifica e "pré-aloca" um posto na cidade gerenciada.
+// Substitua a função PrepareReservation inteira por esta versão
 func (m *StateManager) PrepareReservation(transactionID, vehicleID, requestID string, window schemas.ReservationWindow, coordinatorURL string) (bool, error) {
-	m.cityDataMux.Lock()
-	defer m.cityDataMux.Unlock()
+    m.cityDataMux.Lock()
+    defer m.cityDataMux.Unlock()
 
-	overlappingCount := 0
-	for _, existingRes := range m.cityData.ActiveReservations {
-		if existingRes.Status == schemas.StatusReservationCommitted ||
-			(existingRes.Status == schemas.StatusReservationPrepared && existingRes.TransactionID != transactionID) {
-			if windowsOverlap(existingRes.ReservationWindow, window) {
-				overlappingCount++
-			}
-		}
-	}
+    // 1. Verificar capacidade no StateManager (lógica existente)
+    overlappingCount := 0
+    for _, existingRes := range m.cityData.ActiveReservations {
+        if (existingRes.Status == schemas.StatusReservationCommitted ||
+            (existingRes.Status == schemas.StatusReservationPrepared && existingRes.TransactionID != transactionID)) &&
+            windowsOverlap(existingRes.ReservationWindow, window) {
+            overlappingCount++
+        }
+    }
 
-	if overlappingCount >= m.cityData.MaxPosts {
-		errMsg := fmt.Sprintf("conflito de horário ou capacidade máxima (%d/%d) atingida para a cidade %s na janela solicitada", overlappingCount, m.cityData.MaxPosts, m.ownedCity)
-		log.Printf("[StateManager-%s] TX[%s]: FALHA PREPARE - %s", m.ownedCity, transactionID, errMsg)
-		return false, fmt.Errorf(errMsg)
-	}
+    if overlappingCount >= m.cityData.MaxPosts {
+        errMsg := fmt.Sprintf("conflito de horário ou capacidade máxima (%d/%d) atingida", overlappingCount, m.cityData.MaxPosts)
+        log.Printf("[StateManager-%s] TX[%s]: FALHA PREPARE - %s", m.ownedCity, transactionID, errMsg)
+        return false, fmt.Errorf("%s", errMsg)
+    }
 
-	// Adiciona a nova reserva como PREPARED
-	newRes := schemas.ActiveReservation{
-		TransactionID:     transactionID,
-		VehicleID:         vehicleID,
-		RequestID:         requestID,
-		City:              m.ownedCity, // Sempre a cidade gerenciada
-		ReservationWindow: window,
-		Status:            schemas.StatusReservationPrepared,
-	}
-	newRes.CoordinatorURL = coordinatorURL
-	m.cityData.ActiveReservations = append(m.cityData.ActiveReservations, newRes)
-	log.Printf("[StateManager-%s] TX[%s]: SUCESSO PREPARE. %d postos ocupados na janela. Reserva: %+v", m.ownedCity, transactionID, overlappingCount+1, newRes)
-	return true, nil
+    // 2. Encontrar e preparar um worker disponível
+    preparedWorkerID, err := m.findAndPrepareWorker(transactionID, window)
+    if err != nil {
+        log.Printf("[StateManager-%s] TX[%s]: FALHA PREPARE - Não foi possível preparar um worker: %v", m.ownedCity, transactionID, err)
+        return false, err // Retorna o erro do worker
+    }
+
+    // 3. Sucesso! Adicionar a reserva como PREPARED no estado local
+    newRes := schemas.ActiveReservation{
+        TransactionID:     transactionID,
+        VehicleID:         vehicleID,
+        RequestID:         requestID,
+        City:              m.ownedCity,
+        ReservationWindow: window,
+        Status:            schemas.StatusReservationPrepared,
+        CoordinatorURL:    coordinatorURL,
+        WorkerID:          preparedWorkerID, // Salva o worker que foi preparado
+    }
+    m.cityData.ActiveReservations = append(m.cityData.ActiveReservations, newRes)
+    log.Printf("[StateManager-%s] TX[%s]: SUCESSO PREPARE. Worker '%s' alocado. Reserva: %+v", m.ownedCity, transactionID, preparedWorkerID, newRes)
+    return true, nil
+}
+
+// Adicione esta nova função de busca de worker ao manager.go
+func (m *StateManager) findAndPrepareWorker(transactionID string, window schemas.ReservationWindow) (string, error) {
+    for _, workerID := range m.cpWorkerIDs {
+        log.Printf("[StateManager-%s] TX[%s]: Tentando preparar worker '%s'", m.ownedCity, transactionID, workerID)
+
+        // Lógica de comunicação com o worker (anteriormente em `reserveWindowWithWorker`)
+        prepareMsg := map[string]interface{}{
+            "command":        "PREPARE_RESERVE_WINDOW",
+            "window":         window,
+            "transaction_id": transactionID,
+        }
+        prepareBytes, _ := json.Marshal(prepareMsg)
+        commandTopic := fmt.Sprintf("enterprise/%s/cp/%s/command", m.enterpriseName, workerID)
+
+        responseTopic := fmt.Sprintf("enterprise/%s/cp/%s/response", m.enterpriseName, workerID)
+        respChan := mqtt.StartListening(responseTopic, 1) // Escuta por uma resposta
+
+        mqtt.Publish(commandTopic, string(prepareBytes))
+
+        select {
+        case respPayload := <-respChan:
+            var resp map[string]interface{}
+            if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
+                log.Printf("[StateManager-%s] TX[%s]: Erro ao decodificar resposta do worker '%s': %v", m.ownedCity, transactionID, workerID, err)
+                continue // Tenta o próximo worker
+            }
+
+            // Verifica se a resposta é para o comando de PREPARE e se foi bem-sucedida
+            if resp["command"] == "PREPARE_RESPONSE" {
+                success, _ := resp["success"].(bool)
+                if success {
+                    log.Printf("[StateManager-%s] TX[%s]: Sucesso! Worker '%s' preparado.", m.ownedCity, transactionID, workerID)
+                    return workerID, nil // Sucesso, retorna o ID do worker
+                }
+            }
+
+        case <-time.After(5 * time.Second):
+            log.Printf("[StateManager-%s] TX[%s]: Timeout esperando resposta do worker '%s'", m.ownedCity, transactionID, workerID)
+            continue // Tenta o próximo worker
+        }
+    }
+    // Se o loop terminar, nenhum worker foi preparado com sucesso.
+    return "", fmt.Errorf("nenhum charging point worker disponível na cidade %s para a janela solicitada", m.ownedCity)
 }
 
 func (m *StateManager) CommitReservation(transactionID string) {
@@ -83,6 +153,12 @@ func (m *StateManager) CommitReservation(transactionID string) {
 	for i, res := range m.cityData.ActiveReservations {
 		if res.TransactionID == transactionID && res.Status == schemas.StatusReservationPrepared {
 			m.cityData.ActiveReservations[i].Status = schemas.StatusReservationCommitted
+
+			// Notifica o worker específico que foi reservado!
+            if res.WorkerID != "" {
+                m.sendCommandToWorker(res.WorkerID, transactionID, "COMMIT")
+            }
+
 			log.Printf("[StateManager-%s] TX[%s]: SUCESSO COMMIT. Reserva: %+v", m.ownedCity, transactionID, m.cityData.ActiveReservations[i])
 			found = true
 			// Não precisa retornar, pode haver múltiplos segmentos para a mesma TX (embora não neste modelo de cidade única por API)
@@ -101,6 +177,11 @@ func (m *StateManager) AbortReservation(transactionID string) {
 	aborted := false
 	for _, res := range m.cityData.ActiveReservations {
 		if res.TransactionID == transactionID && res.Status == schemas.StatusReservationPrepared {
+
+			if res.WorkerID != "" {
+                m.sendCommandToWorker(res.WorkerID, transactionID, "ABORT")
+            }
+
 			log.Printf("[StateManager-%s] TX[%s]: SUCESSO ABORT. Removendo reserva: %+v", m.ownedCity, transactionID, res)
 			aborted = true
 		} else {
@@ -138,7 +219,7 @@ func (m *StateManager) IsCoordinator(transactionID string) bool {
         if res.TransactionID == transactionID {
             // Se a URL do coordenador for vazia ou "localhost" ou igual à URL desta instância, considere coordenador.
             // Adapte conforme sua lógica de identificação.
-            return res.CoordinatorURL == "" || res.CoordinatorURL == "localhost" // ou compare com sua URL real
+            return res.CoordinatorURL == m.myAPIURL // ou compare com sua URL real
         }
     }
     return false
@@ -180,4 +261,15 @@ func (m *StateManager) GetCityAvailability() (string, int, []schemas.ActiveReser
 	reservationsCopy := make([]schemas.ActiveReservation, len(m.cityData.ActiveReservations))
 	copy(reservationsCopy, m.cityData.ActiveReservations)
 	return m.ownedCity, m.cityData.MaxPosts, reservationsCopy
+}
+
+func (m *StateManager) sendCommandToWorker(workerID, transactionID, command string) {
+    msg := map[string]interface{}{
+        "command":        command,
+        "transaction_id": transactionID,
+    }
+    msgBytes, _ := json.Marshal(msg)
+    topic := fmt.Sprintf("enterprise/%s/cp/%s/command", m.enterpriseName, workerID)
+    mqtt.Publish(topic, string(msgBytes))
+    log.Printf("[StateManager-%s] TX[%s]: Comando '%s' enviado para worker '%s'", m.ownedCity, transactionID, command, workerID)
 }

@@ -4,27 +4,40 @@ import (
 	"time"
 )
 
-// ReservationWindow define o início e o fim de uma reserva.
-type ReservationWindow struct {
-	StartTimeUTC time.Time `json:"start_time_utc"` // Formato: "YYYY-MM-DDTHH:mm:ssZ"
-	EndTimeUTC   time.Time `json:"end_time_utc"`   // Formato: "YYYY-MM-DDTHH:mm:ssZ"
+// --- ESTRUTURAS DE COMUNICAÇÃO CARRO <-> API (via MQTT) ---
+
+// RouteRequest é a solicitação inicial do carro para uma rota.
+type RouteRequest struct {
+	VehicleID   string `json:"vehicle_id"`
+	Origin      string `json:"origin"`
+	Destination string `json:"destination"`
 }
 
-// CoordinatorCallbackURLs URLs para o coordenador ser chamado de volta.
-type CoordinatorCallbackURLs struct {
-	CommitURL string `json:"commit_url"`
-	AbortURL  string `json:"abort_url"`
+// RouteReservationOptions contém as opções de rotas que a API envia ao carro.
+type RouteReservationOptions struct {
+	RequestID string           `json:"request_id"` // ID único para esta requisição de rota
+	VehicleID string           `json:"vehicle_id"`
+	Routes    [][]RouteSegment `json:"routes"`
 }
 
-type ActiveReservation struct {
-	TransactionID     string            `json:"transaction_id"`
-	VehicleID         string            `json:"vehicle_id"`
-	RequestID         string            `json:"request_id"` // ID da requisição de rota original
-	City              string            `json:"city"`
-	ReservationWindow ReservationWindow `json:"reservation_window"`
-	Status            string            `json:"status"` // Ex: "PREPARED", "COMMITTED"
-
+// ChosenRouteMsg é a mensagem que o carro envia de volta com a rota escolhida.
+type ChosenRouteMsg struct {
+	RequestID string         `json:"request_id"`
+	VehicleID string         `json:"vehicle_id"`
+	Route     []RouteSegment `json:"route"`
 }
+
+// ReservationStatus é a mensagem final da API para o carro, confirmando ou negando a reserva.
+type ReservationStatus struct {
+	TransactionID  string         `json:"transaction_id"`
+	VehicleID      string         `json:"vehicle_id"`
+	RequestID      string         `json:"request_id"`
+	Status         string         `json:"status"` // Ex: "CONFIRMED", "REJECTED"
+	Message        string         `json:"message"`
+	ConfirmedRoute []RouteSegment `json:"confirmed_route,omitempty"` // Rota confirmada, se aplicável
+}
+
+// ReservationEndMessage é enviada quando uma janela de reserva expira.
 type ReservationEndMessage struct {
 	VehicleID     string    `json:"vehicle_id"`
 	TransactionID string    `json:"transaction_id"`
@@ -32,98 +45,61 @@ type ReservationEndMessage struct {
 	Message       string    `json:"message"` // Ex: "Reserva encerrada"
 }
 
+// --- ESTRUTURAS DE COMUNICAÇÃO INTER-APIs (Two-Phase Commit via HTTP) ---
+
+// RemotePrepareRequest é o payload para a chamada /2pc_remote/prepare.
+type RemotePrepareRequest struct {
+	TransactionID     string            `json:"transaction_id"`
+	VehicleID         string            `json:"vehicle_id"`
+	RequestID         string            `json:"request_id"`
+	City              string            `json:"city"`
+	ReservationWindow ReservationWindow `json:"reservation_window"`
+	CoordinatorURL    string            `json:"coordinator_url"` // Campo adicionado
+}
+
+// RemotePrepareResponse é a resposta para a chamada /2pc_remote/prepare.
 type RemotePrepareResponse struct {
 	Status        string `json:"status"` // "PREPARED" ou "REJECTED"
 	TransactionID string `json:"transaction_id"`
 	Reason        string `json:"reason,omitempty"`
 }
 
-// Novas structs para comunicação inter-APIs (para os Passos 3 e 4)
-type RemotePrepareRequest struct {
-	TransactionID     string            `json:"transaction_id"`
-	VehicleID         string            `json:"vehicle_id"`
-	RequestID         string            `json:"request_id"`
-	City              string            `json:"city"` // A cidade para preparar
-	ReservationWindow ReservationWindow `json:"reservation_window"`
-}
-
+// RemoteCommitAbortRequest é o payload para as chamadas /2pc_remote/commit e /2pc_remote/abort.
 type RemoteCommitAbortRequest struct {
 	TransactionID string `json:"transaction_id"`
 }
 
-// ReservationStatus informa o veículo sobre o resultado da tentativa de reserva.
-type ReservationStatus struct {
-	TransactionID  string         `json:"transaction_id"`
-	VehicleID      string         `json:"vehicle_id"`
-	RequestID      string         `json:"request_id"` // ID da requisição de rota original
-	Status         string         `json:"status"`     // Ex: "CONFIRMED", "REJECTED"
-	Message        string         `json:"message"`
-	ConfirmedRoute []RouteSegment `json:"confirmed_route,omitempty"` // Rota confirmada, se aplicável
+// CostUpdatePayload é o payload para a chamada /cost-update.
+type CostUpdatePayload struct {
+	TransactionID string  `json:"transaction_id"`
+	SegmentCity   string  `json:"segment_city"`
+	Cost          float64 `json:"cost"`
 }
 
-// Constantes para Status da Reserva Ativa
-const (
-	StatusReservationPrepared  = "PREPARED"
-	StatusReservationCommitted = "COMMITTED"
-)
+// --- ESTRUTURAS DO REGISTRY DE SERVIÇOS ---
 
-// PrepareRequestBody é a estrutura para a requisição /prepare.
-type PrepareRequestBody struct {
-	TransactionID           string                  `json:"transaction_id"`
-	SegmentID               string                  `json:"segment_id"`
-	ChargingPointID         string                  `json:"charging_point_id"`
-	VehicleID               string                  `json:"vehicle_id"`
-	ReservationWindow       ReservationWindow       `json:"reservation_window"`
-	CoordinatorCallbackURLs CoordinatorCallbackURLs `json:"coordinator_callback_urls"`
+// RegisterRequest é o payload para registrar uma API no serviço de Registry.
+type RegisterRequest struct {
+	CityManaged    string `json:"city_managed"`    // A cidade que esta API gerencia
+	ApiURL         string `json:"api_url"`         // A URL base da API (ex: http://solatlantico:8080)
+	EnterpriseName string `json:"enterprise_name"` // Nome da empresa/API
 }
 
-// PrepareSuccessResponse é a estrutura para uma resposta /prepare bem-sucedida.
-type PrepareSuccessResponse struct {
-	Status           string `json:"status"` // "PREPARED"
-	TransactionID    string `json:"transaction_id"`
-	SegmentID        string `json:"segment_id"`
-	PreparedUntilUTC string `json:"prepared_until_utc,omitempty"`
+// DiscoverResponse é a resposta do serviço de Registry para uma consulta.
+type DiscoverResponse struct {
+	CityName       string `json:"city_name"`
+	ApiURL         string `json:"api_url"`
+	EnterpriseName string `json:"enterprise_name,omitempty"`
+	Found          bool   `json:"found"`
 }
 
-// ErrorResponse é uma resposta de erro genérica.
-type ErrorResponse struct {
-	Status        string `json:"status"`
-	TransactionID string `json:"transaction_id,omitempty"`
-	SegmentID     string `json:"segment_id,omitempty"`
-	Reason        string `json:"reason"`
-}
+// --- ESTRUTURAS E COMPONENTES COMUNS ---
 
-// TransactionState representa o estado de um segmento de transação.
-type TransactionState struct {
-	Status          string      // PREPARED, COMMITTED, ABORTED
-	Details         interface{} // Detalhes da reserva
-	Timestamp       time.Time
-	ReservationData PrepareRequestBody // Mantém os dados da reserva original
+// Enterprises representa uma empresa disponível no sistema.
+type Enterprises struct {
+	Name string `json:"name"`
+	City string `json:"city"`
 }
-
-// ProvisionalReservation representa uma reserva pendente.
-type ProvisionalReservation struct {
-	TransactionID     string
-	SegmentID         string
-	ChargingPointID   string
-	VehicleID         string
-	StartTime         time.Time
-	EndTime           time.Time
-	Status            string // PREPARED_PENDING_COMMIT, CONFIRMED, CANCELLED
-	ReservationWindow ReservationWindow
-}
-
-// Constantes de Status
-const (
-	StatusPrepared              = "PREPARED"
-	StatusAborted               = "ABORTED"
-	StatusError                 = "ERROR"
-	StatusCommitted             = "COMMITTED"
-	StatusPreparedPendingCommit = "PREPARED_PENDING_COMMIT"
-	StatusConfirmed             = "CONFIRMED"
-	StatusCancelled             = "CANCELLED"
-	ISOFormat                   = "2006-01-02T15:04:05Z"
-)
 
 // RouteSegment define um trecho da rota a ser reservado.
 type RouteSegment struct {
@@ -131,47 +107,50 @@ type RouteSegment struct {
 	ReservationWindow ReservationWindow `json:"reservation_window"`
 }
 
-// RouteReservationResponse é a estrutura da mensagem MQTT para enviar uma resposta para o carro.
-type RouteReservationResponse struct {
-	RequestID string         `json:"request_id"` // ID único para esta requisição de rota
-	VehicleID string         `json:"vehicle_id"`
-	Route     []RouteSegment `json:"route"`
+// ReservationWindow define o início e o fim de uma reserva.
+type ReservationWindow struct {
+	StartTimeUTC time.Time `json:"start_time_utc"` // Formato: "YYYY-MM-DDTHH:mm:ssZ"
+	EndTimeUTC   time.Time `json:"end_time_utc"`   // Formato: "YYYY-MM-DDTHH:mm:ssZ"
 }
 
-type RouteReservationOptions struct {
-	RequestID string           `json:"request_id"` // ID único para esta requisição de rota
-	VehicleID string           `json:"vehicle_id"`
-	Routes    [][]RouteSegment `json:"route"`
+// ActiveReservation representa o estado de uma reserva no StateManager da API.
+type ActiveReservation struct {
+	TransactionID     string            `json:"transaction_id"`
+	VehicleID         string            `json:"vehicle_id"`
+	RequestID         string            `json:"request_id"`
+	City              string            `json:"city"`
+	ReservationWindow ReservationWindow `json:"reservation_window"`
+	Status            string            `json:"status"` // Ex: "PREPARED", "COMMITTED"
+	CoordinatorURL    string            `json:"-"`      // URL do coordenador, não precisa ser exposto no JSON de status.
+	WorkerID		 string            `json:"worker_id"` // ID do worker que processou a reserva
 }
 
-type RouteRequest struct {
-	VehicleID   string `json:"vehicle_id"`
-	Origin      string `json:"origin"`
-	Destination string `json:"destination"`
+// TransactionState representa o estado de uma transação na Blockchain.
+type TransactionState struct {
+	Status    string         `json:"status"` // PREPARED, COMMITTED, ABORTED
+	Details   []RouteSegment `json:"details"`
+	Timestamp time.Time      `json:"timestamp"`
 }
 
-type Enterprises struct {
-	Name string `json:"name"`
-	City string `json:"city"`
+// ErrorResponse é uma resposta de erro genérica.
+type ErrorResponse struct {
+	Status        string `json:"status"`
+	TransactionID string `json:"transaction_id,omitempty"`
+	Reason        string `json:"reason"`
 }
 
-type ChosenRouteMsg struct {
-	RequestID string         `json:"request_id"` // ID único para esta requisição de rota
-	VehicleID string         `json:"vehicle_id"`
-	Route     []RouteSegment `json:"route"`
-}
+// --- CONSTANTES ---
 
-// RegisterRequest é o payload para registrar uma API de cidade.
-type RegisterRequest struct {
-	CityManaged    string `json:"city_managed"`    // A cidade que esta API gerencia
-	ApiURL         string `json:"api_url"`         // A URL base da API (ex: http://localhost:8080)
-	EnterpriseName string `json:"enterprise_name"` // Nome da empresa/API
-}
+const (
+	// Status de Reserva (2PC e StateManager)
+	StatusReservationPrepared  = "PREPARED"
+	StatusReservationCommitted = "COMMITTED"
+	StatusAborted              = "ABORTED"
+	StatusRejected             = "REJECTED"
 
-// DiscoverResponse é o payload da resposta de descoberta.
-type DiscoverResponse struct {
-	CityName       string `json:"city_name"`
-	ApiURL         string `json:"api_url"`
-	EnterpriseName string `json:"enterprise_name,omitempty"`
-	Found          bool   `json:"found"`
-}
+	// Status para o Carro
+	StatusConfirmed = "CONFIRMED"
+
+	// Outros
+	ISOFormat = "2006-01-02T15:04:05Z"
+)

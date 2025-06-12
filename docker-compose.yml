@@ -38,12 +38,12 @@ services:
       - ENTERPRISE_NAME=SolAtlantico
       - ENTERPRISE_PORT=8080
       - OWNED_CITY=Salvador
-      - POSTS_QUANTITY=2
+      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
       - REGISTRY_URL=http://registry:9000
       - MQTT_BROKER=tcp://mosquitto:1883
     ports:
       - "8080:8080"
-    volumes: # Mapeia os certificados para que a API possa se conectar à rede
+    volumes:
       - /caminho/para/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
@@ -58,7 +58,7 @@ services:
       - ENTERPRISE_NAME=SertaoCarga
       - ENTERPRISE_PORT=8081
       - OWNED_CITY=Feira de Santana
-      - POSTS_QUANTITY=5
+      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
       - REGISTRY_URL=http://registry:9000
       - MQTT_BROKER=tcp://mosquitto:1883
     ports:
@@ -78,7 +78,7 @@ services:
       - ENTERPRISE_NAME=CacauPower
       - ENTERPRISE_PORT=8083
       - OWNED_CITY=Ilheus
-      - POSTS_QUANTITY=2
+      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
       - REGISTRY_URL=http://registry:9000
       - MQTT_BROKER=tcp://mosquitto:1883
     ports:

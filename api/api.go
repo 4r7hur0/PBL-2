@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/4r7hur0/PBL-2/api/mqtt"
@@ -23,20 +23,20 @@ import (
 var (
 	// Variáveis globais para a configuração desta instância da API
 	enterpriseName  string
-	enterprisePort  string
 	ownedCity       string
 	postsQuantity   int
 	stateMgr        *state.StateManager
 	allSystemCities []string
 	registryClient  *rc.RegistryClient // Cliente do Registry
+	myAPIURL string
 	cpWorkerIDs     []string // IDs dos Charging Point Workers registrados nesta API
 )
 
 func main() {
 
-	enterpriseName := os.Getenv("ENTERPRISE_NAME")
+	enterpriseName = os.Getenv("ENTERPRISE_NAME") // Renomeado para atribuição direta
 	enterprisePort := os.Getenv("ENTERPRISE_PORT")
-	postsQuantityStr := os.Getenv("POSTS_QUANTITY")
+	workerIDsStr := os.Getenv("CP_WORKER_IDS") // Lê a nova variável
 	ownedCity = os.Getenv("OWNED_CITY")
 	registryURL := os.Getenv("REGISTRY_URL") // Ex: http://localhost:9000
 
@@ -48,34 +48,25 @@ func main() {
 		fmt.Println("AVISO: ENTERPRISE_PORT não definido. Usando '8080'.")
 		enterprisePort = "8080"
 	}
-	if postsQuantityStr == "" {
-		fmt.Println("AVISO: POSTS_QUANTITY não definido. Usando '5' por cidade.")
-		postsQuantity = 5
+	if workerIDsStr == "" {
+		log.Println("AVISO: CP_WORKER_IDS não definido. Usando 'CP001' como padrão.")
+		cpWorkerIDs = []string{"CP001"}
 	} else {
-		var err error
-		postsQuantity, err = strconv.Atoi(postsQuantityStr)
-		if err != nil {
-			log.Printf("Erro ao converter POSTS_QUANTITY: %v. Usando 5.", err)
-			postsQuantity = 5
-		}
+		cpWorkerIDs = strings.Split(workerIDsStr, ",") // Separa a string em uma lista de IDs
 	}
-	
-	// ADICIONE ESTE BLOCO PARA POPULAR OS WORKERS <<<
-    for i := 1; i <= postsQuantity; i++ {
-        workerID := fmt.Sprintf("CP%03d", i) // Gera IDs como CP001, CP002, etc.
-        cpWorkerIDs = append(cpWorkerIDs, workerID)
-    }
-    // FIM DO BLOCO ADICIONADO
 
+	postsQuantity = len(cpWorkerIDs) // A quantidade de postos é o tamanho da lista
+	
 	log.Printf("Iniciando API para a empresa: %s na porta %s, gerenciando a cidade: %s com %d postos.", enterpriseName, enterprisePort, ownedCity, postsQuantity)
 
+	myAPIURL = fmt.Sprintf("http://%v:%s", enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
+
 	// Inicializar o StateManager APENAS para a cidade que esta API possui
-	stateMgr = state.NewStateManager(ownedCity, postsQuantity)
+	stateMgr = state.NewStateManager(ownedCity, postsQuantity, myAPIURL, cpWorkerIDs)
 
+	
 	// Inicializar e usar o Registry Client
-	registryClient := rc.NewRegistryClient(registryURL)
-
-	myAPIURL := fmt.Sprintf("http://%v:%s", enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
+	registryClient = rc.NewRegistryClient(registryURL)
 
 	err := registryClient.RegisterService(enterpriseName, ownedCity, myAPIURL)
 	if err != nil {
@@ -159,7 +150,6 @@ func main() {
 
 	// Goroutine para processar a rota escolhida pelo carro
 	go func() {	
-		localWorkersUsed := make(map[string]string) // cidade -> workerID
 		for messagePayload := range chosenRouteMessageChannel {
 			transactionID := uuid.New().String()
 
@@ -192,35 +182,20 @@ func main() {
 				windowToReserve := segment.ReservationWindow
 
 				if cityToReserve == ownedCity { // Reserva LOCAL
-					log.Printf("[%s] TX[%s]: Iniciando PREPARE LOCAL para %s em %s", enterpriseName, transactionID, chosenRoute.VehicleID, cityToReserve)
+					log.Printf("[%s] TX[%s]: Iniciando PREPARE LOCAL via StateManager para %s", enterpriseName, transactionID, cityToReserve)
 
-					// Escolher worker disponível (implemente sua lógica, ex: round-robin)
-					workerID, success, err := escolherWorkerDisponivel(windowToReserve, transactionID)
+					// Agora o StateManager cuida de tudo, incluindo a comunicação com o worker.
+					success, err := stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve, myAPIURL)
 					if !success || err != nil {
-						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL. Nenhum worker disponível para %s: %v", enterpriseName, transactionID, cityToReserve, err)
+						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (via StateManager) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
 						prepareOverallSuccess = false
-						break
+						break // Sai do loop de segmentos se a preparação local falhar
 					}
 
-					// Reservar via MQTT
-					success, err = stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve, myAPIURL) // Adicionado myAPIURL para o coordenador
-					if !success || err != nil {
-						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (worker) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
-						prepareOverallSuccess = false
-						break
-					}
-
-					// Só agora registrar no StateManager
-					success, err = stateMgr.PrepareReservation(transactionID, chosenRoute.VehicleID, chosenRoute.RequestID, windowToReserve)
-					if !success || err != nil {
-						log.Printf("[%s] TX[%s]: FALHA PREPARE LOCAL (stateMgr) para %s: %v", enterpriseName, transactionID, cityToReserve, err)
-						prepareOverallSuccess = false
-						break
-					}
-
-					// Salvar worker usado para commit/abort depois
+					// Se chegou aqui, o StateManager já preparou a si mesmo e o worker.
 					preparedParticipants[cityToReserve] = "local"
-					localWorkersUsed[cityToReserve] = workerID
+					log.Printf("[%s] TX[%s]: SUCESSO PREPARE LOCAL para %s", enterpriseName, transactionID, cityToReserve)
+
 				} else { // Reserva REMOTA
 					log.Printf("[%s] TX[%s]: Descobrindo API para cidade remota '%s'", enterpriseName, transactionID, cityToReserve)
 					discoveredService, err_discover := registryClient.DiscoverService(cityToReserve)
@@ -277,8 +252,6 @@ func main() {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL SUCESSO. Iniciando COMMIT.", enterpriseName, transactionID)
 				for city, participantTypeOrURL := range preparedParticipants {
 					if participantTypeOrURL == "local" {
-						workerID := localWorkersUsed[city]
-						sendCommitOrAbortToWorker(workerID, transactionID, "COMMIT") // ou "ABORT" no bloco de abort
 						stateMgr.CommitReservation(transactionID)
 						log.Printf("[%s] TX[%s]: COMMIT LOCAL para %s", enterpriseName, transactionID, city)
 					} else {
@@ -325,12 +298,12 @@ func main() {
 					_, err = contract.SubmitTransaction("RegisterReserve", transactionID, chosenRoute.VehicleID, string(routeJSON))
 					if err != nil {
 						log.Printf("[%s] TX[%s]: ERRO - Falha ao submeter 'RegisterReserve' na blockchain: %v", enterpriseName, transactionID, err)
-					} else {
-						log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
-					}
-          
-				publishReservationStatus(chosenRoute.VehicleID, transactionID, "CONFIRMED", "Reserva confirmada com sucesso", &chosenRoute, enterpriseName)
-			} else {
+				} else {
+					log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
+				}
+			}
+			publishReservationStatus(chosenRoute.VehicleID, transactionID, "CONFIRMED", "Reserva confirmada com sucesso", &chosenRoute, enterpriseName)
+		} else {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL FALHOU. Iniciando ABORT.", enterpriseName, transactionID)
 				for city, participantTypeOrURL := range preparedParticipants { // Abortar apenas os que foram preparados
 					if participantTypeOrURL == "local" {
@@ -365,7 +338,7 @@ func main() {
 			stateMgr.CheckAndEndReservations()
 		}
 	}()
-	setupWorkerEventListener(stateMgr, enterpriseName, ownedCity, registryClient)
+	setupWorkerEventListener(stateMgr, enterpriseName, ownedCity)
 	// Configurar e iniciar o servidor Gin (HTTP)
 	r := gin.Default()
 	setupRouter(r, stateMgr, enterpriseName) // Passar dependências
@@ -622,71 +595,8 @@ func publishReservationStatus(vehicleID, transactionID, status, message string, 
 	log.Printf("[%s] TX[%s]: Status da reserva '%s' publicado para VehicleID %s no tópico %s.", pubEnterpriseName, transactionID, status, vehicleID, topic)
 }
 
-// Função para reservar janela em um ChargingPointWorker via MQTT
-func reserveWindowWithWorker(workerID string, window schemas.ReservationWindow, transactionID string) (bool, error) {
-    // 1. Publicar QUERY_AVAILABILITY
-    queryMsg := map[string]interface{}{
-        "command": "QUERY_AVAILABILITY",
-        "window":  window,
-    }
-    queryBytes, _ := json.Marshal(queryMsg)
-    queryTopic := fmt.Sprintf("enterprise/%s/cp/%s/command", enterpriseName, workerID)
-    mqtt.Publish(queryTopic, string(queryBytes))
-
-    // 2. Esperar resposta de disponibilidade
-    responseTopic := fmt.Sprintf("enterprise/%s/cp/%s/response", enterpriseName, workerID)
-    respChan := mqtt.StartListening(responseTopic, 1)
-    select {
-    case respPayload := <-respChan:
-        var resp map[string]interface{}
-        if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
-            return false, fmt.Errorf("erro ao decodificar resposta do worker: %v", err)
-        }
-        available, _ := resp["available"].(bool)
-        if !available {
-            return false, nil
-        }
-    case <-time.After(5 * time.Second):
-        return false, fmt.Errorf("timeout esperando resposta do worker")
-    }
-
-    // 3. Publicar PREPARE_RESERVE_WINDOW
-    prepareMsg := map[string]interface{}{
-        "command":        "PREPARE_RESERVE_WINDOW",
-        "window":         window,
-        "transaction_id": transactionID,
-    }
-    prepareBytes, _ := json.Marshal(prepareMsg)
-    mqtt.Publish(queryTopic, string(prepareBytes))
-
-    // 4. Esperar resposta do PREPARE
-    select {
-    case respPayload := <-respChan:
-        var resp map[string]interface{}
-        if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
-            return false, fmt.Errorf("erro ao decodificar resposta do worker: %v", err)
-        }
-        success, _ := resp["success"].(bool)
-        return success, nil
-    case <-time.After(5 * time.Second):
-        return false, fmt.Errorf("timeout esperando resposta do worker")
-    }
-}
-
-
-// Para COMMIT/ABORT:
-func sendCommitOrAbortToWorker(workerID, transactionID, command string) {
-    msg := map[string]interface{}{
-        "command":        command, // "COMMIT" ou "ABORT"
-        "transaction_id": transactionID,
-    }
-    msgBytes, _ := json.Marshal(msg)
-    topic := fmt.Sprintf("enterprise/%s/cp/%s/command", enterpriseName, workerID)
-    mqtt.Publish(topic, string(msgBytes))
-}
-
 // Função para escutar eventos dos ChargingPointWorkers e acionar o cost-update
-func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity string, registryClient *rc.RegistryClient) {
+func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity string) {
     eventTopic := fmt.Sprintf("enterprise/%s/cp/+/event", enterpriseName)
     eventChan := mqtt.StartListening(eventTopic, 10)
     go func() {
@@ -716,15 +626,15 @@ func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity 
                 // Descobrir URL do coordenador se não for eu
                 var costUpdateURL string
                 if isCoordinator {
-                    costUpdateURL = fmt.Sprintf("http://localhost:%s/cost-update", enterprisePort)
+                     costUpdateURL = fmt.Sprintf("%s/cost-update", myAPIURL) 
                 } else {
                     // Descobrir coordenador pelo registry (ou pelo state, se você salvar o CoordinatorURL)
                     coordinatorURL, found := sm.GetCoordinatorURL(transactionID)
-					if !found || coordinatorURL == "" { ... }
-                        log.Printf("[%s] TX[%s]: Não foi possível determinar o coordenador para cost-update.", enterpriseName, transactionID)
-                        continue
-                    }
-                    costUpdateURL = fmt.Sprintf("%s/cost-update", coordinatorURL)
+					if !found || coordinatorURL == "" {
+						log.Printf("[%s] TX[%s]: Não foi possível determinar o coordenador para cost-update.", enterpriseName, transactionID)
+						continue
+					}
+					costUpdateURL = fmt.Sprintf("%s/cost-update", coordinatorURL)
                 }
 
                 // Chama o endpoint /cost-update (POST)
@@ -746,24 +656,4 @@ func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity 
             }
         }
     }()
-}
-
-func escolherWorkerDisponivel(window schemas.ReservationWindow, transactionID string) (string, bool, error) {
-	for _, workerID := range cpWorkerIDs {
-		log.Printf("[%s] TX[%s]: Tentando reservar janela no worker '%s'", enterpriseName, transactionID, workerID)
-		success, err := reserveWindowWithWorker(workerID, window, transactionID)
-		if err != nil {
-			// Loga o erro mas continua tentando outros workers
-			log.Printf("[%s] TX[%s]: Erro ao tentar reservar no worker '%s': %v", enterpriseName, transactionID, workerID, err)
-			continue
-		}
-		if success {
-			// Sucesso! Retorna o ID do worker escolhido.
-			log.Printf("[%s] TX[%s]: Sucesso! Worker '%s' selecionado e preparado.", enterpriseName, transactionID, workerID)
-			return workerID, true, nil
-		}
-	}
-	// Se o loop terminar, nenhum worker estava disponível ou todos falharam.
-	log.Printf("[%s] TX[%s]: Nenhum worker disponível para a janela solicitada.", enterpriseName, transactionID)
-	return "", false, fmt.Errorf("nenhum charging point worker disponível na cidade %s para a janela solicitada", ownedCity)
 }

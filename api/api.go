@@ -543,17 +543,21 @@ func handleCostUpdate(c *gin.Context, localEntName string) {
 	network := gw.GetNetwork(fabricChannelName)
 	contract := network.GetContract(fabricChaincodeName)
 
-	// Chama a função do chaincode para atualizar o custo do segmento
-	_, err = contract.SubmitTransaction("UpdateSegmentCost", payload.TransactionID, payload.SegmentCity, fmt.Sprintf("%.2f", payload.Cost))
+	// Converte o custo para string
+	costStr := fmt.Sprintf("%.2f", payload.Cost)
+	// Define um valor padrão para energia consumida, pois não vem do worker
+	energyConsumedStr := "0.0"
+
+	// Chama a função correta do novo smart contract: EndCharging
+	log.Printf("[%s] TX[%s]: Submetendo 'EndCharging' na blockchain com Custo: %s, Energia Consumida: %s", localEntName, payload.TransactionID, costStr, energyConsumedStr)
+	_, err = contract.SubmitTransaction("EndCharging", payload.TransactionID, costStr, energyConsumedStr)
 	if err != nil {
-		log.Printf("[%s] TX[%s]: ERRO ao submeter 'UpdateSegmentCost' na blockchain: %v", localEntName, payload.TransactionID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao atualizar custo na blockchain", "details": err.Error()})
+		log.Printf("[%s] TX[%s]: ERRO ao submeter 'EndCharging' na blockchain: %v", localEntName, payload.TransactionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao finalizar recarga na blockchain", "details": err.Error()})
 		return
 	}
-
-	log.Printf("[%s] TX[%s]: CHAINCODE_ACTION: UpdateSegmentCost for City: %s, Cost: %.2f", localEntName, payload.TransactionID, payload.SegmentCity, payload.Cost)
-	c.JSON(http.StatusOK, gin.H{"status": "Cost update registered on blockchain successfully"})
 }
+
 
 func handleRemoteCommit(c *gin.Context, sm *state.StateManager, localEntName string) {
 	var req schemas.RemoteCommitAbortRequest

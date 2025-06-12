@@ -37,7 +37,7 @@ func (cpw *ChargingPointWorker) isAvailable(window schemas.ReservationWindow) bo
 	return true
 }
 
-func (cpw *ChargingPointWorker) handleMQTTMessage(topic, payload string) {
+func (cpw *ChargingPointWorker) handleMQTTMessage(payload string) {
 	var msg map[string]interface{}
 	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
 		log.Printf("Erro ao decodificar mensagem MQTT: %v", err)
@@ -46,82 +46,77 @@ func (cpw *ChargingPointWorker) handleMQTTMessage(topic, payload string) {
 
 	cmd, _ := msg["command"].(string)
 	switch cmd {
-	case "QUERY_AVAILABILITY":
-		var window schemas.ReservationWindow
-		b, _ := json.Marshal(msg["window"])
-		json.Unmarshal(b, &window)
-
-		cpw.mu.Lock() // Bloqueia para ler o estado de forma segura
-		available := cpw.isAvailable(window)
-		cpw.mu.Unlock() // Libera após a leitura
-
-		resp := map[string]interface{}{
-			"command":   "AVAILABILITY_RESPONSE",
-			"available": available,
-			"window":    window,
-			"worker_id": cpw.ID,
-		}
-		respBytes, _ := json.Marshal(resp)
-		mqtt.Publish(fmt.Sprintf("enterprise/%s/cp/%s/response", os.Getenv("ENTERPRISE_NAME"), cpw.ID), string(respBytes))
+	// REMOVIDO: O case "QUERY_AVAILABILITY" não é mais necessário.
 
 	case "PREPARE_RESERVE_WINDOW":
 		var window schemas.ReservationWindow
 		b, _ := json.Marshal(msg["window"])
 		json.Unmarshal(b, &window)
 		txID, _ := msg["transaction_id"].(string)
+		
+		responseTopic, rt_ok := msg["response_topic"].(string)
+		if !rt_ok {
+			log.Printf("ERRO: Mensagem PREPARE_RESERVE_WINDOW sem response_topic. TX: %s", txID)
+			return
+		}
 
-		// 3. Início da Seção Crítica: Adquira o lock ANTES de verificar e modificar
+		var success bool
+		// *** Início da Seção Crítica Atômica ***
 		cpw.mu.Lock()
-
 		if cpw.isAvailable(window) {
 			cpw.Reservations = append(cpw.Reservations, ReservationWindow{
 				StartTimeUTC:  window.StartTimeUTC,
 				EndTimeUTC:    window.EndTimeUTC,
 				TransactionID: txID,
-				Status:        "prepared",
+				Status:        "prepared", // Marca como preparado
 			})
-			cpw.mu.Unlock() // 4. Libere o lock logo após a operação bem-sucedida
-
-			resp := map[string]interface{}{
-				"command":        "PREPARE_RESPONSE",
-				"success":        true,
-				"transaction_id": txID,
-				"worker_id":      cpw.ID,
-			}
-			respBytes, _ := json.Marshal(resp)
-			mqtt.Publish(fmt.Sprintf("enterprise/%s/cp/%s/response", os.Getenv("ENTERPRISE_NAME"), cpw.ID), string(respBytes))
+			success = true
+			log.Printf("[%s] SUCESSO PREPARE para TX: %s. Janela: %v", cpw.ID, txID, window)
 		} else {
-			cpw.mu.Unlock() // 4. Libere o lock também no caso de falha
-
-			resp := map[string]interface{}{
-				"command":        "PREPARE_RESPONSE",
-				"success":        false,
-				"transaction_id": txID,
-				"worker_id":      cpw.ID,
-			}
-			respBytes, _ := json.Marshal(resp)
-			mqtt.Publish(fmt.Sprintf("enterprise/%s/cp/%s/response", os.Getenv("ENTERPRISE_NAME"), cpw.ID), string(respBytes))
+			success = false
+			log.Printf("[%s] FALHA PREPARE para TX: %s. Conflito de janela.", cpw.ID, txID)
 		}
+		cpw.mu.Unlock()
+		// *** Fim da Seção Crítica Atômica ***
+
+		// Monta a resposta
+		resp := map[string]interface{}{
+			"command":        "PREPARE_RESPONSE",
+			"success":        success,
+			"transaction_id": txID,
+			"worker_id":      cpw.ID,
+		}
+		respBytes, _ := json.Marshal(resp)
+
+		// Publica a resposta (sucesso ou falha) no tópico de resposta
+		mqtt.Publish(responseTopic, string(respBytes))
+
 	case "COMMIT":
 		txID, _ := msg["transaction_id"].(string)
 		cpw.mu.Lock()
 		for i, r := range cpw.Reservations {
 			if r.TransactionID == txID && r.Status == "prepared" {
 				cpw.Reservations[i].Status = "committed"
+				log.Printf("[%s] SUCESSO COMMIT para TX: %s", cpw.ID, txID)
 			}
 		}
 		cpw.mu.Unlock()
+
 	case "ABORT":
 		txID, _ := msg["transaction_id"].(string)
 		cpw.mu.Lock()
+		// Em vez de remover, marcamos como abortada para manter histórico se necessário.
+		// Para limpar a lista, você poderia usar a lógica de remoção.
 		for i, r := range cpw.Reservations {
 			if r.TransactionID == txID && r.Status == "prepared" {
 				cpw.Reservations[i].Status = "aborted"
+				log.Printf("[%s] SUCESSO ABORT para TX: %s", cpw.ID, txID)
 			}
 		}
 		cpw.mu.Unlock()
 	}
 }
+
 
 // Rotina para detectar passagem do tempo e cobrar
 func (cpw *ChargingPointWorker) monitorPassageAndCharge() {
@@ -176,6 +171,6 @@ func main() {
 	go cpw.monitorPassageAndCharge()
 
 	for msg := range msgChan {
-		cpw.handleMQTTMessage(commandTopic, msg)
+		cpw.handleMQTTMessage(msg)
 	}
 }

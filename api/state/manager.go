@@ -11,12 +11,10 @@ import (
 	"strings"
 
   "github.com/4r7hur0/PBL-2/api/mqtt"
-	"github.com/4r7hur0/PBL-2/schemas" 
+	"github.com/4r7hur0/PBL-2/schemas"
+	"github.com/google/uuid" 
 )
 
-func windowsOverlap(r1 schemas.ReservationWindow, r2 schemas.ReservationWindow) bool {
-	return r1.StartTimeUTC.Before(r2.EndTimeUTC) && r1.EndTimeUTC.After(r2.StartTimeUTC)
-}
 
 type CityState struct {
 	MaxPosts           int
@@ -56,93 +54,96 @@ func NewStateManager(ownedCity string, initialPosts int, myAPIURL string, worker
 }
 
 // PrepareReservation verifica e "pré-aloca" um posto na cidade gerenciada.
-// Substitua a função PrepareReservation inteira por esta versão
+// VERSÃO ATUALIZADA DA FUNÇÃO PrepareReservation
 func (m *StateManager) PrepareReservation(transactionID, vehicleID, requestID string, window schemas.ReservationWindow, coordinatorURL string) (bool, error) {
-    m.cityDataMux.Lock()
-    defer m.cityDataMux.Unlock()
+	m.cityDataMux.Lock()
+	defer m.cityDataMux.Unlock()
 
-    // 1. Verificar capacidade no StateManager (lógica existente)
-    overlappingCount := 0
-    for _, existingRes := range m.cityData.ActiveReservations {
-        if (existingRes.Status == schemas.StatusReservationCommitted ||
-            (existingRes.Status == schemas.StatusReservationPrepared && existingRes.TransactionID != transactionID)) &&
-            windowsOverlap(existingRes.ReservationWindow, window) {
-            overlappingCount++
-        }
-    }
+	// 1. Verificar se já existe uma reserva PREPARADA para esta mesma transação.
+	// Isso evita tentar preparar múltiplos workers para a mesma TX na mesma API.
+	for _, res := range m.cityData.ActiveReservations {
+		if res.TransactionID == transactionID && res.Status == schemas.StatusReservationPrepared {
+			log.Printf("[StateManager-%s] TX[%s]: AVISO - Tentativa de preparar uma transação já preparada localmente.", m.ownedCity, transactionID)
+			return true, nil // Considera sucesso, pois já está preparado.
+		}
+	}
 
-    if overlappingCount >= m.cityData.MaxPosts {
-        errMsg := fmt.Sprintf("conflito de horário ou capacidade máxima (%d/%d) atingida", overlappingCount, m.cityData.MaxPosts)
-        log.Printf("[StateManager-%s] TX[%s]: FALHA PREPARE - %s", m.ownedCity, transactionID, errMsg)
-        return false, fmt.Errorf("%s", errMsg)
-    }
+	// 2. Tentar preparar um worker disponível. A verificação de capacidade é delegada.
+	preparedWorkerID, err := m.attemptToPrepareWorker(transactionID, window)
+	if err != nil {
+		log.Printf("[StateManager-%s] TX[%s]: FALHA PREPARE - Não foi possível preparar um worker: %v", m.ownedCity, transactionID, err)
+		return false, err
+	}
 
-    // 2. Encontrar e preparar um worker disponível
-    preparedWorkerID, err := m.findAndPrepareWorker(transactionID, window)
-    if err != nil {
-        log.Printf("[StateManager-%s] TX[%s]: FALHA PREPARE - Não foi possível preparar um worker: %v", m.ownedCity, transactionID, err)
-        return false, err // Retorna o erro do worker
-    }
-
-    // 3. Sucesso! Adicionar a reserva como PREPARED no estado local
-    newRes := schemas.ActiveReservation{
-        TransactionID:     transactionID,
-        VehicleID:         vehicleID,
-        RequestID:         requestID,
-        City:              m.ownedCity,
-        ReservationWindow: window,
-        Status:            schemas.StatusReservationPrepared,
-        CoordinatorURL:    coordinatorURL,
-        WorkerID:          preparedWorkerID, // Salva o worker que foi preparado
-    }
-    m.cityData.ActiveReservations = append(m.cityData.ActiveReservations, newRes)
-    log.Printf("[StateManager-%s] TX[%s]: SUCESSO PREPARE. Worker '%s' alocado. Reserva: %+v", m.ownedCity, transactionID, preparedWorkerID, newRes)
-    return true, nil
+	// 3. Sucesso! Adicionar a reserva como PREPARED no estado local do StateManager.
+	newRes := schemas.ActiveReservation{
+		TransactionID:     transactionID,
+		VehicleID:         vehicleID,
+		RequestID:         requestID,
+		City:              m.ownedCity,
+		ReservationWindow: window,
+		Status:            schemas.StatusReservationPrepared,
+		CoordinatorURL:    coordinatorURL,
+		WorkerID:          preparedWorkerID, // Salva o ID do worker que confirmou a preparação.
+	}
+	m.cityData.ActiveReservations = append(m.cityData.ActiveReservations, newRes)
+	log.Printf("[StateManager-%s] TX[%s]: SUCESSO PREPARE. Worker '%s' alocado. Reserva: %+v", m.ownedCity, transactionID, preparedWorkerID, newRes)
+	return true, nil
 }
 
-// Adicione esta nova função de busca de worker ao manager.go
-func (m *StateManager) findAndPrepareWorker(transactionID string, window schemas.ReservationWindow) (string, error) {
-    for _, workerID := range m.cpWorkerIDs {
-        log.Printf("[StateManager-%s] TX[%s]: Tentando preparar worker '%s'", m.ownedCity, transactionID, workerID)
+// NOVA FUNÇÃO para tentar preparar um worker diretamente.
+func (m *StateManager) attemptToPrepareWorker(transactionID string, window schemas.ReservationWindow) (string, error) {
+	// Itera sobre todos os workers gerenciados por esta API
+	for _, workerID := range m.cpWorkerIDs {
+		log.Printf("[StateManager-%s] TX[%s]: Tentando preparar o worker '%s'", m.ownedCity, transactionID, workerID)
 
-        // Lógica de comunicação com o worker (anteriormente em `reserveWindowWithWorker`)
-        prepareMsg := map[string]interface{}{
-            "command":        "PREPARE_RESERVE_WINDOW",
-            "window":         window,
-            "transaction_id": transactionID,
-        }
-        prepareBytes, _ := json.Marshal(prepareMsg)
-        commandTopic := fmt.Sprintf("enterprise/%s/cp/%s/command", m.enterpriseName, workerID)
+		// Cria um tópico de resposta único para esta tentativa específica
+		responseTopic := fmt.Sprintf("enterprise/%s/cp/%s/response/%s", m.enterpriseName, workerID, uuid.New().String())
 
-        responseTopic := fmt.Sprintf("enterprise/%s/cp/%s/response", m.enterpriseName, workerID)
-        respChan := mqtt.StartListening(responseTopic, 1) // Escuta por uma resposta
+		// Monta a mensagem de preparação
+		prepareMsg := map[string]interface{}{
+			"command":        "PREPARE_RESERVE_WINDOW",
+			"window":         window,
+			"transaction_id": transactionID,
+			"response_topic": responseTopic,
+		}
+		prepareBytes, _ := json.Marshal(prepareMsg)
+		commandTopic := fmt.Sprintf("enterprise/%s/cp/%s/command", m.enterpriseName, workerID)
 
-        mqtt.Publish(commandTopic, string(prepareBytes))
+		// Prepara para escutar a resposta
+		respChan := mqtt.StartListening(responseTopic, 1) // Buffer de 1 é suficiente
+		
+		// Publica a tentativa de preparação
+		mqtt.Publish(commandTopic, string(prepareBytes))
 
-        select {
-        case respPayload := <-respChan:
-            var resp map[string]interface{}
-            if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
-                log.Printf("[StateManager-%s] TX[%s]: Erro ao decodificar resposta do worker '%s': %v", m.ownedCity, transactionID, workerID, err)
-                continue // Tenta o próximo worker
-            }
+		// Aguarda a resposta do worker ou um timeout
+		select {
+		case respPayload := <-respChan:
+			var resp map[string]interface{}
+			if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
+				log.Printf("[StateManager-%s] TX[%s]: Erro ao decodificar resposta de PREPARE do worker '%s': %v", m.ownedCity, transactionID, workerID, err)
+				continue // Tenta o próximo worker
+			}
+			
+			// Verifica se o worker respondeu com sucesso
+			if success, ok := resp["success"].(bool); ok && success {
+				log.Printf("[StateManager-%s] TX[%s]: SUCESSO! Worker '%s' preparado.", m.ownedCity, transactionID, workerID)
+				// TODO: Parar de escutar no tópico de resposta (unsubscribe) para limpar recursos.
+				return workerID, nil // Sucesso! Retorna o ID do worker e encerra o loop.
+			} else {
+				log.Printf("[StateManager-%s] TX[%s]: Worker '%s' respondeu com falha (provavelmente ocupado).", m.ownedCity, transactionID, workerID)
+				// Continua para tentar o próximo worker
+			}
 
-            // Verifica se a resposta é para o comando de PREPARE e se foi bem-sucedida
-            if resp["command"] == "PREPARE_RESPONSE" {
-                success, _ := resp["success"].(bool)
-                if success {
-                    log.Printf("[StateManager-%s] TX[%s]: Sucesso! Worker '%s' preparado.", m.ownedCity, transactionID, workerID)
-                    return workerID, nil // Sucesso, retorna o ID do worker
-                }
-            }
+		case <-time.After(5 * time.Second): // Timeout para a resposta
+			log.Printf("[StateManager-%s] TX[%s]: Timeout esperando resposta de PREPARE do worker '%s'", m.ownedCity, transactionID, workerID)
+			// Continua para tentar o próximo worker
+		}
+		// TODO: Parar de escutar no tópico de resposta (unsubscribe) em caso de falha/timeout.
+	}
 
-        case <-time.After(5 * time.Second):
-            log.Printf("[StateManager-%s] TX[%s]: Timeout esperando resposta do worker '%s'", m.ownedCity, transactionID, workerID)
-            continue // Tenta o próximo worker
-        }
-    }
-    // Se o loop terminar, nenhum worker foi preparado com sucesso.
-    return "", fmt.Errorf("nenhum charging point worker disponível na cidade %s para a janela solicitada", m.ownedCity)
+	// Se o loop terminar, nenhum worker conseguiu ser preparado.
+	return "", fmt.Errorf("nenhum charging point worker disponível ou falha na comunicação na cidade %s", m.ownedCity)
 }
 
 func (m *StateManager) CommitReservation(transactionID string) {
@@ -157,7 +158,7 @@ func (m *StateManager) CommitReservation(transactionID string) {
 			// Notifica o worker específico que foi reservado!
             if res.WorkerID != "" {
                 m.sendCommandToWorker(res.WorkerID, transactionID, "COMMIT")
-            }
+            }	
 
 			log.Printf("[StateManager-%s] TX[%s]: SUCESSO COMMIT. Reserva: %+v", m.ownedCity, transactionID, m.cityData.ActiveReservations[i])
 			found = true
